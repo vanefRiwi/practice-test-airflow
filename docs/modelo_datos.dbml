@@ -1,0 +1,101 @@
+// Modelo del repositorio analítico DataMart.
+// Para verlo como diagrama: https://dbdiagram.io -> Import -> pega este archivo.
+
+Table dwh.dates_dim {
+  id_date integer [pk, note: 'YYYYMMDD']
+  full_date date [unique]
+  year smallint
+  quarter smallint
+  month smallint
+  month_name varchar
+  year_month char(7)
+  day smallint
+  day_of_week smallint
+  day_name varchar
+  is_weekend boolean
+}
+
+Table dwh.products_dim {
+  id_product serial [pk]
+  stock_code varchar(20) [unique]
+  product_description varchar(255) [note: 'nombre canónico']
+  category varchar(50)
+  description_variants smallint
+}
+
+Table dwh.customers_dim {
+  id_customer serial [pk, note: '-1 = ANONIMO']
+  customer_code varchar(20) [unique]
+  is_identified boolean
+}
+
+Table dwh.countries_dim {
+  id_country serial [pk]
+  country_name varchar(100) [unique]
+}
+
+Table dwh.sales_fact {
+  row_hash char(32) [pk, note: 'MD5 de la clave natural']
+  source_system varchar(20)
+  invoice_no varchar(20)
+  invoice_ts_utc timestamptz
+  id_date integer [ref: > dwh.dates_dim.id_date]
+  id_product integer [ref: > dwh.products_dim.id_product]
+  id_customer integer [ref: > dwh.customers_dim.id_customer]
+  id_country integer [ref: > dwh.countries_dim.id_country]
+  quantity integer [note: '> 0']
+  unit_price numeric(12,3) [note: '> 0']
+  gross_revenue numeric(14,2)
+  currency char(3)
+}
+
+Table dwh.returns_fact {
+  row_hash char(32) [pk]
+  source_system varchar(20)
+  invoice_no varchar(20)
+  return_type varchar(20) [note: 'cancelacion | ajuste']
+  invoice_ts_utc timestamptz
+  id_date integer [ref: > dwh.dates_dim.id_date]
+  id_product integer [ref: > dwh.products_dim.id_product]
+  id_customer integer [ref: > dwh.customers_dim.id_customer]
+  id_country integer [ref: > dwh.countries_dim.id_country]
+  quantity_returned integer
+  unit_price numeric(12,3)
+  return_amount numeric(14,2)
+  currency char(3)
+}
+
+Table dwh.daily_product_revenue_agg {
+  id_date integer [pk, ref: > dwh.dates_dim.id_date]
+  id_product integer [pk, ref: > dwh.products_dim.id_product]
+  sales_lines integer
+  units_sold integer
+  gross_revenue numeric(14,2)
+  return_lines integer
+  units_returned integer
+  returns_amount numeric(14,2)
+  net_revenue numeric(14,2) [note: 'gross_revenue - returns_amount']
+}
+
+Table audit.rejected_records {
+  source_system varchar(20) [pk]
+  source_row integer [pk]
+  reason varchar(50)
+  raw_record jsonb
+  run_id varchar(250)
+}
+
+Table audit.pipeline_runs {
+  run_id varchar(250) [pk]
+  logical_date timestamptz
+  rows_read_sales integer
+  rows_read_history integer
+  rows_valid integer
+  rows_rejected integer
+  duplicates_cross_source integer
+  rows_sales_fact integer
+  rows_returns_fact integer
+  rejected_ratio numeric(6,4)
+  status varchar(20)
+  updated_at timestamptz
+}
