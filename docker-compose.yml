@@ -1,0 +1,178 @@
+# =============================================================================
+# DataMart S.A.S. - Airflow 3.1.5 (LocalExecutor) + PostgreSQL de metadatos
+# + PostgreSQL analítico (DWH). Basado en el docker-compose oficial de Airflow.
+#
+# Uso:  cp .env.example .env  &&  docker compose up -d
+# UI:   http://localhost:8080  (usuario y contraseña definidos en .env)
+#
+# Solo para desarrollo local; no usar tal cual en producción.
+# Todas las credenciales salen de .env (nunca del código ni de este archivo).
+# =============================================================================
+x-airflow-common:
+  &airflow-common
+  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.1.5}
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:?Define AIRFLOW_DB_USER en .env}:${AIRFLOW_DB_PASSWORD:?Define AIRFLOW_DB_PASSWORD en .env}@postgres-airflow/${AIRFLOW_DB_NAME:-airflow}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+    # Secretos compartidos por todos los componentes (api-server firma los tokens de las tareas)
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?Define AIRFLOW_JWT_SECRET en .env}
+    AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY:?Define AIRFLOW_API_SECRET_KEY en .env}
+    # El DAG queda activo al iniciar: el scheduler lo ejecuta sin entrar a la UI
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
+    # Paquete del ETL (include/datamart) importable desde el DAG y las tareas
+    PYTHONPATH: /opt/airflow/include
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./include:/opt/airflow/include
+    - ./logs:/opt/airflow/logs
+    - ./config:/opt/airflow/config
+    - ./plugins:/opt/airflow/plugins
+    - ./data:/opt/airflow/data
+    - ./seeds:/opt/airflow/seeds:ro
+    - ./sql:/opt/airflow/sql:ro
+    - ./airflow/init:/opt/airflow/init:ro
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    &airflow-common-depends-on
+    postgres-airflow:
+      condition: service_healthy
+
+services:
+  # ---------------------------------------------------------------------------
+  # Base de metadatos de Airflow (no es el repositorio analítico)
+  # ---------------------------------------------------------------------------
+  postgres-airflow:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${AIRFLOW_DB_USER}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      POSTGRES_DB: ${AIRFLOW_DB_NAME:-airflow}
+    volumes:
+      - postgres-airflow-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+
+  # ---------------------------------------------------------------------------
+  # Repositorio analítico (DWH). Las tablas se crean al iniciar con sql/ddl.
+  # ---------------------------------------------------------------------------
+  postgres-dwh:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${DWH_USER:?Define DWH_USER en .env}
+      POSTGRES_PASSWORD: ${DWH_PASSWORD:?Define DWH_PASSWORD en .env}
+      POSTGRES_DB: ${DWH_DB:-datamart_dwh}
+    ports:
+      - "${DWH_HOST_PORT:-5433}:5432"
+    volumes:
+      - postgres-dwh-volume:/var/lib/postgresql/data
+      - ./sql/ddl:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+
+  # ---------------------------------------------------------------------------
+  # Inicialización: migra metadatos, crea admin, Connections y Variables
+  # ---------------------------------------------------------------------------
+  airflow-init:
+    <<: *airflow-common
+    command: bash /opt/airflow/init/inicializar_airflow.sh
+    user: "0:0"
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:?Define _AIRFLOW_WWW_USER_USERNAME en .env}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:?Define _AIRFLOW_WWW_USER_PASSWORD en .env}
+      AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+      # Solo este servicio necesita las credenciales del DWH: las guarda en la Connection
+      DWH_HOST: postgres-dwh
+      DWH_PORT: 5432
+      DWH_DB: ${DWH_DB:-datamart_dwh}
+      DWH_USER: ${DWH_USER}
+      DWH_PASSWORD: ${DWH_PASSWORD}
+    depends_on:
+      <<: *airflow-common-depends-on
+      postgres-dwh:
+        condition: service_healthy
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      postgres-dwh:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-triggerer:
+    <<: *airflow-common
+    command: triggerer
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-airflow-volume:
+  postgres-dwh-volume:

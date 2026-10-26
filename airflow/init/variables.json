@@ -1,0 +1,7 @@
+{
+    "datamart_archivo_ventas": "raw/data.csv.gz",
+    "datamart_archivo_historico": "raw/online_retail.csv.gz",
+    "datamart_zona_horaria_origen": "Europe/London",
+    "datamart_max_ratio_rechazos": "0.10",
+    "datamart_moneda": "GBP"
+}
