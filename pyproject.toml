@@ -1,0 +1,35 @@
+[project]
+name = "datamart-etl-airflow"
+version = "0.1.0"
+description = "Pipeline ETL de DataMart S.A.S. orquestado con Apache Airflow 3 y un Data Warehouse en PostgreSQL"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+# Versiones fijadas igual que las constraints de la imagen apache/airflow:3.1.5 (Python 3.12),
+# así el código se prueba en local con las mismas librerías que usa el contenedor.
+dependencies = [
+    "numpy==1.26.4",
+    "pandas==2.1.4",
+    "pyarrow==18.1.0",
+    "sqlalchemy==1.4.54",
+    "psycopg2-binary==2.9.11",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["include", "dags"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["datamart"]
