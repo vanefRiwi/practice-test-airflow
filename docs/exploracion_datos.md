@@ -1,6 +1,6 @@
 # Exploración de las fuentes
 
-Resultados de `uv run python scripts/explorar_fuentes.py` sobre los archivos de `data/raw/`. Cada problema encontrado tiene su tratamiento en el pipeline (columna **Decisión**).
+Resultados de `uv run python scripts/explore_sources.py` sobre los archivos de `data/raw/`. Cada problema encontrado tiene su tratamiento en el pipeline (columna **Decisión**).
 
 ## 1. Ficha de las fuentes
 
@@ -8,7 +8,7 @@ Resultados de `uv run python scripts/explorar_fuentes.py` sobre los archivos de 
 |---|---|---|
 | Kaggle | carrie1/ecommerce-data | thedevastator/online-retail-transaction-dataset |
 | Archivo en el repo | `data/raw/data.csv` | `data/raw/online_retail.csv` |
-| `source_system` | `ventas_diarias` | `historico` |
+| `source_system` | `daily_sales` | `history` |
 | Encoding | ISO-8859-1 (falla en UTF-8) | UTF-8 |
 | Filas | 541.909 | 541.909 |
 | Columnas | `InvoiceNo, StockCode, Description, Quantity, InvoiceDate, UnitPrice, CustomerID, Country` | `index` + las mismas 8 |
@@ -40,11 +40,11 @@ Resultados de `uv run python scripts/explorar_fuentes.py` sobre los archivos de 
 | Problema | Filas (por fuente) | Decisión |
 |---|---:|---|
 | Cantidad ≤ 0 | 10.624 | Devolución o ajuste → `dwh.returns_fact` |
-| Facturas con prefijo `C` | 9.288 | `return_type = cancelacion` |
-| Precio ≤ 0 | 2.517 | Si es venta (1.181): rechazo `precio_no_positivo`. Si es devolución con precio 0: ajuste de inventario válido |
-| Sin CustomerID | 135.080 | Cliente genérico `ANONIMO` (`id_customer = -1`) |
-| Códigos que no son producto | 2.950 | Rechazo `codigo_no_producto` (POST 1.256, DOT 710, M 572, C2 144, D 77, S 63, BANK CHARGES 37, AMAZONFEE 34, CRUK 16, GIFT_0001_* 34, PADS 4...) |
-| Filas duplicadas exactas | 5.268 | Rechazo `duplicado_en_fuente` (5.259 después de normalizar; el resto ya tenía otro motivo) |
+| Facturas con prefijo `C` | 9.288 | `return_type = cancellation` |
+| Precio ≤ 0 | 2.517 | Si es venta (1.181): rechazo `non_positive_price`. Si es devolución con precio 0: ajuste de inventario válido |
+| Sin CustomerID | 135.080 | Cliente genérico `ANONYMOUS` (`id_customer = -1`) |
+| Códigos que no son producto | 2.950 | Rechazo `not_a_product_code` (POST 1.256, DOT 710, M 572, C2 144, D 77, S 63, BANK CHARGES 37, AMAZONFEE 34, CRUK 16, GIFT_0001_* 34, PADS 4...) |
+| Filas duplicadas exactas | 5.268 | Rechazo `duplicate_in_source` (5.259 después de normalizar; el resto ya tenía otro motivo) |
 | Códigos con más de una descripción | 645 | Nombre canónico = descripción más frecuente |
 | Códigos en minúscula o con espacios | | Normalización a mayúsculas sin espacios |
 | Países con alias (`EIRE`, `RSA`, `USA`, `Unspecified`) | | `seeds/country_mapping.csv` |
@@ -59,6 +59,6 @@ Resultados de `uv run python scripts/explorar_fuentes.py` sobre los archivos de 
 | Ventas cargadas (`dwh.sales_fact`) | 522.535 |
 | Devoluciones y ajustes (`dwh.returns_fact`) | 10.004 |
 | Productos (`dwh.products_dim`) | 3.927 |
-| Clientes identificados (`dwh.customers_dim`) | 4.362 + ANONIMO |
+| Clientes identificados (`dwh.customers_dim`) | 4.362 + ANONYMOUS |
 | Países (`dwh.countries_dim`) | 38 |
 | Días de calendario cubiertos (`dwh.dates_dim`) | 374 |

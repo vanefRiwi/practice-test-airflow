@@ -1,8 +1,8 @@
 -- =============================================================================
--- P7. Base numérica de la recomendación al equipo de producto:
--- productos con mucho revenue bruto que pierden una parte relevante en devoluciones.
+-- Q7. Numbers behind the recommendation to the product team:
+-- products with high gross revenue that lose a relevant share to returns.
 -- =============================================================================
-WITH producto AS (
+WITH product AS (
     SELECT p.stock_code,
            p.product_description,
            p.category,
@@ -19,9 +19,9 @@ SELECT stock_code,
        gross_revenue,
        returns_amount,
        net_revenue,
-       ROUND(100.0 * returns_amount / gross_revenue, 2)                          AS pct_devolucion,
-       ROUND(100.0 * returns_amount / SUM(returns_amount) OVER (), 2)           AS pct_de_todas_las_devoluciones
-FROM producto
+       ROUND(100.0 * returns_amount / gross_revenue, 2)                AS return_pct,
+       ROUND(100.0 * returns_amount / SUM(returns_amount) OVER (), 2)  AS pct_of_all_returns
+FROM product
 WHERE gross_revenue >= 5000
 ORDER BY returns_amount DESC
 LIMIT 15;

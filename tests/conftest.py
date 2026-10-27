@@ -1,15 +1,15 @@
-"""Filas de ejemplo con el formato de cada CSV."""
+"""Sample rows in the format of each CSV."""
 
 import pandas as pd
 import pytest
 
-from datamart import configuracion as cfg
-from datamart.extraccion import estandarizar_columnas
+from datamart import config as cfg
+from datamart.extract import standardize_columns
 
 
 @pytest.fixture
-def ventas_raw():
-    """Formato de data.csv."""
+def sales_raw():
+    """data.csv format."""
     df = pd.DataFrame(
         {
             "InvoiceNo": ["536365", "536365", "536365", "C536379", "536380", "536381", "536382"],
@@ -39,12 +39,12 @@ def ventas_raw():
         },
         dtype="string",
     ).astype(object)
-    return estandarizar_columnas(df, cfg.FUENTE_VENTAS)
+    return standardize_columns(df, cfg.SOURCE_SALES)
 
 
 @pytest.fixture
-def historico_raw():
-    """Formato de online_retail.csv (trae index y CustomerID con .0)."""
+def history_raw():
+    """online_retail.csv format (has an index column and CustomerID with .0)."""
     df = pd.DataFrame(
         {
             "index": ["0", "1"],
@@ -58,20 +58,20 @@ def historico_raw():
             "Country": ["United Kingdom", "United Kingdom"],
         }
     )
-    return estandarizar_columnas(df, cfg.FUENTE_HISTORICO)
+    return standardize_columns(df, cfg.SOURCE_HISTORY)
 
 
 @pytest.fixture
-def reglas():
+def rules():
     return pd.DataFrame(
         {
             "priority": [0, 1, 5],
             "keyword": ["T-LIGHT", "LIGHT", "CAKESTAND"],
-            "category": ["Hogar", "Electrónica", "Hogar"],
+            "category": ["Home", "Electronics", "Home"],
         }
     )
 
 
 @pytest.fixture
-def mapeo_paises():
+def country_mapping():
     return {"EIRE": "Ireland"}

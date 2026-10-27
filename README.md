@@ -1,57 +1,61 @@
-# DataMart S.A.S. — Pipeline ETL con Apache Airflow
+# DataMart S.A.S. — ETL Pipeline with Apache Airflow
 
-## Primera plataforma de datos: de CSV operacionales a un Data Warehouse en PostgreSQL
+**English** | [Español](README.es.md)
 
-Pipeline de extremo a extremo orquestado con **Apache Airflow 3.1.5** dentro de Docker: lee dos fuentes CSV de Kaggle con formatos distintos, las limpia y unifica, separa ventas de devoluciones, registra cada rechazo con su motivo y carga un **modelo estrella** en un PostgreSQL analítico, listo para responder las preguntas de negocio.
+## A first data platform: from operational CSVs to a PostgreSQL data warehouse
 
-**Autor:** Vanessa Fontalvo Reniz · Ingeniera de Sistemas y Computación
-**Módulo:** Ingeniería de Datos — Prueba de desempeño (Airflow + Data Warehouse)
+End-to-end pipeline orchestrated with **Apache Airflow 3.1.5** in Docker: it reads two Kaggle CSV sources with different formats, cleans and merges them, splits sales from returns, logs every rejected row with its reason and loads a **star schema** into an analytical PostgreSQL database, ready to answer the business questions.
+
+**Author:** Vanessa Fontalvo Reniz · Systems and Computer Engineer
+**Module:** Data Engineering — Performance test (Airflow + Data Warehouse)
+
+> The supporting documents in `docs/` (technical decisions, data exploration, data model and business answers) are written in Spanish.
 
 ---
 
-## 1. Inicio rápido (menos de 10 minutos)
+## 1. Quick start (under 10 minutes)
 
-**Requisitos:** Docker Desktop (o Docker Engine + Compose v2) con al menos **4 GB de RAM** asignados y Git. No hace falta instalar Python ni descargar nada de Kaggle: los datos vienen en el repositorio.
+**Requirements:** Docker Desktop (or Docker Engine + Compose v2) with at least **4 GB of RAM** and Git. No need to install Python or download anything from Kaggle: the data is in the repository.
 
 ```bash
-# 1. Clonar
+# 1. Clone
 git clone https://github.com/vanefRiwi/practice-test-airflow.git
 cd practice-test-airflow
 
-# 2. Crear el .env a partir del ejemplo (en Linux, pon tu UID: echo "AIRFLOW_UID=$(id -u)" >> .env)
+# 2. Create .env from the example (on Linux, set your UID: echo "AIRFLOW_UID=$(id -u)" >> .env)
 cp .env.example .env
 
-# 3. Levantar todo
+# 3. Start everything
 docker compose up -d
 ```
 
-Al terminar el arranque (1 a 2 minutos la primera vez, más la descarga de imágenes) queda todo listo **sin pasos manuales**:
+Once it finishes starting (1 to 2 minutes the first time, plus the image download) everything is ready **with no manual steps**:
 
-| Servicio | Qué hace | Acceso |
+| Service | What it does | Access |
 |---|---|---|
-| `airflow-apiserver` | UI y API de Airflow | http://localhost:8080 (usuario y clave de `.env`, por defecto `admin` / `cambia_esta_clave_admin`) |
-| `airflow-scheduler` | Detecta y ejecuta el DAG | — |
-| `airflow-dag-processor` | Parsea los DAGs | — |
-| `airflow-triggerer` | Tareas diferidas | — |
-| `postgres-airflow` | Metadatos de Airflow | interno |
-| `postgres-dwh` | Repositorio analítico con las tablas creadas al iniciar | `localhost:5433` |
-| `airflow-init` | Migra metadatos, crea el admin, las **Connections** y las **Variables**, y termina | — |
+| `airflow-apiserver` | Airflow UI and API | http://localhost:8080 (user and password from `.env`, default `admin` / `change_this_admin_password`) |
+| `airflow-scheduler` | Picks up and runs the DAG | — |
+| `airflow-dag-processor` | Parses the DAGs | — |
+| `airflow-triggerer` | Deferred tasks | — |
+| `postgres-airflow` | Airflow metadata | internal |
+| `postgres-dwh` | Analytical warehouse, tables created on startup | `localhost:5433` |
+| `airflow-init` | Migrates metadata, creates the admin, the **Connections** and the **Variables**, then exits | — |
 
-El DAG `datamart_etl_diario` queda **activo** y el scheduler lanza su primera ejecución automáticamente (tarda unos 2 minutos). También se puede lanzar a mano con el botón ▶ de la UI.
+The `datamart_daily_etl` DAG starts **unpaused** and the scheduler triggers its first run automatically (about 2 minutes). It can also be triggered by hand with the ▶ button in the UI.
 
-Para empezar de cero (borra las bases): `docker compose down -v`.
+To start from scratch (wipes the databases): `docker compose down -v`.
 
 ---
 
-## 2. Verificación paso a paso
+## 2. Step-by-step check
 
-### 2.1 Servicios arriba
+### 2.1 Services up
 
 ```bash
-docker compose ps          # todos "healthy"; airflow-init "exited (0)"
+docker compose ps          # all "healthy"; airflow-init "exited (0)"
 ```
 
-### 2.2 Connections y Variables creadas solas
+### 2.2 Connections and Variables created automatically
 
 ```bash
 docker compose exec airflow-scheduler airflow connections get dwh_postgres -o yaml
@@ -59,34 +63,34 @@ docker compose exec airflow-scheduler airflow connections get fs_datamart -o yam
 docker compose exec airflow-scheduler airflow variables list
 ```
 
-También se ven en la UI: **Admin → Connections** y **Admin → Variables**.
+They also show up in the UI: **Admin → Connections** and **Admin → Variables**.
 
-| Connection | Tipo | Uso |
+| Connection | Type | Used for |
 |---|---|---|
-| `dwh_postgres` | postgres | Repositorio analítico (host `postgres-dwh`, credenciales tomadas de `.env`) |
-| `fs_datamart` | fs | Carpeta `/opt/airflow/data` que vigilan los `FileSensor` |
+| `dwh_postgres` | postgres | Analytical warehouse (host `postgres-dwh`, credentials taken from `.env`) |
+| `fs_datamart` | fs | `/opt/airflow/data` folder watched by the `FileSensor`s |
 
-| Variable | Valor inicial | Para qué |
+| Variable | Initial value | Purpose |
 |---|---|---|
-| `datamart_archivo_ventas` | `raw/data.csv` | Archivo diario de órdenes |
-| `datamart_archivo_historico` | `raw/online_retail.csv` | Historial extendido |
-| `datamart_zona_horaria_origen` | `Europe/London` | Zona horaria de la fuente para convertir a UTC |
-| `datamart_max_ratio_rechazos` | `0.10` | Umbral de calidad: si se rechaza más del 10 %, el DAG falla antes de cargar |
-| `datamart_moneda` | `GBP` | Moneda de los montos |
+| `datamart_sales_file` | `raw/data.csv` | Daily orders file |
+| `datamart_history_file` | `raw/online_retail.csv` | Extended history |
+| `datamart_source_timezone` | `Europe/London` | Source timezone, used to convert to UTC |
+| `datamart_max_reject_ratio` | `0.10` | Quality threshold: if more than 10 % is rejected the DAG fails before loading |
+| `datamart_currency` | `GBP` | Currency of the amounts |
 
-Se definen en [`airflow/init/variables.json`](airflow/init/variables.json) y las crea [`airflow/init/inicializar_airflow.sh`](airflow/init/inicializar_airflow.sh) en cada arranque.
+They are defined in [`airflow/init/variables.json`](airflow/init/variables.json) and created by [`airflow/init/init_airflow.sh`](airflow/init/init_airflow.sh) on every startup.
 
-### 2.3 El DAG terminó bien
+### 2.3 The DAG finished successfully
 
 ```bash
-docker compose exec airflow-scheduler airflow dags list-runs datamart_etl_diario
+docker compose exec airflow-scheduler airflow dags list-runs datamart_daily_etl
 ```
 
-### 2.4 Los datos llegaron al repositorio analítico
+### 2.4 The data reached the warehouse
 
 ```bash
 docker compose exec postgres-dwh psql -U dwh_user -d datamart_dwh -c "
-SELECT 'sales_fact' AS tabla, COUNT(*) FROM dwh.sales_fact
+SELECT 'sales_fact' AS table_name, COUNT(*) FROM dwh.sales_fact
 UNION ALL SELECT 'returns_fact', COUNT(*) FROM dwh.returns_fact
 UNION ALL SELECT 'daily_product_revenue_agg', COUNT(*) FROM dwh.daily_product_revenue_agg
 UNION ALL SELECT 'products_dim', COUNT(*) FROM dwh.products_dim
@@ -96,99 +100,99 @@ UNION ALL SELECT 'rejected_records', COUNT(*) FROM audit.rejected_records;"
 docker compose exec postgres-dwh psql -U dwh_user -d datamart_dwh -c "SELECT * FROM audit.pipeline_runs;"
 ```
 
-Resultado esperado: **522.535** ventas, **10.004** devoluciones, **277.958** filas producto-día, **3.927** productos, **4.363** clientes (incluido ANONIMO) y **18.740** rechazos.
+Expected result: **522,535** sales, **10,004** returns, **277,958** product-day rows, **3,927** products, **4,363** customers (ANONYMOUS included) and **18,740** rejections.
 
-Las consultas de negocio se ejecutan igual, por ejemplo:
+The business queries run the same way, for example:
 
 ```bash
-docker compose exec -T postgres-dwh psql -U dwh_user -d datamart_dwh < sql/consultas/q1_ventas_netas_mensuales.sql
+docker compose exec -T postgres-dwh psql -U dwh_user -d datamart_dwh < sql/queries/q1_monthly_net_sales.sql
 ```
 
-Desde DBeaver o Power BI: host `localhost`, puerto `5433`, base `datamart_dwh` y el usuario/clave de `.env`.
+From DBeaver or Power BI: host `localhost`, port `5433`, database `datamart_dwh` and the user/password from `.env`.
 
 ---
 
-## 3. Fuentes de datos
+## 3. Data sources
 
-| Fuente | Archivo | Filas | Problemas principales |
+| Source | File | Rows | Main issues |
 |---|---|---:|---|
-| Ventas diarias (Kaggle `carrie1/ecommerce-data`) | `data/raw/data.csv` | 541.909 | Encoding ISO-8859-1, cantidades negativas, precios ≤ 0, 24,9 % sin cliente, códigos de servicio (POST, DOT...), duplicados |
-| Historial (Kaggle `thedevastator/online-retail-transaction-dataset`) | `data/raw/online_retail.csv` | 541.909 | Columna `index` extra, CustomerID decimal (`17850.0`) y **mismo periodo y líneas** que la fuente diaria |
+| Daily sales (Kaggle `carrie1/ecommerce-data`) | `data/raw/data.csv` | 541,909 | ISO-8859-1 encoding, negative quantities, prices ≤ 0, 24.9 % without customer, service codes (POST, DOT...), duplicates |
+| History (Kaggle `thedevastator/online-retail-transaction-dataset`) | `data/raw/online_retail.csv` | 541,909 | Extra `index` column, decimal CustomerID (`17850.0`) and **same period and lines** as the daily source |
 
-Los CSV están en `data/raw/` tal como vienen de Kaggle (45 y 50 MB). La exploración completa está en [`docs/exploracion_datos.md`](docs/exploracion_datos.md).
+The CSVs are in `data/raw/` exactly as they come from Kaggle (45 and 50 MB). The full exploration is in [`docs/exploracion_datos.md`](docs/exploracion_datos.md).
 
 ---
 
-## 4. Diagrama del pipeline
+## 4. Pipeline diagram
 
 ```
-                ┌───────────────────────── DAG datamart_etl_diario (@daily) ─────────────────────────┐
+                ┌───────────────────────── DAG datamart_daily_etl (@daily) ──────────────────────────┐
                 │                                                                                    │
- data/raw/      │ preparar_directorio_temporal (setup)        crear_tablas_dwh                       │
- data.csv ─────┼─► esperar_archivo_ventas ──► extraer_ventas_diarias ─┐                            │
- online_retail ─┼─► esperar_archivo_historico ► extraer_historico ─────┼─► transformar_y_unificar  │
- seeds/*.csv ───┼─────────────────────────────► extraer_reglas_categoria┘          │                 │
-                │                                                       validar_calidad             │
-                │                                          ┌─────────────────┴─────────────┐        │
-                │                                   cargar_staging                  cargar_rechazos │
-                │                                          │                               │        │
-                │                                  cargar_dimensiones                      │        │
-                │                          ┌───────────────┴───────────────┐               │        │
-                │                 cargar_hecho_ventas        cargar_hecho_devoluciones     │        │
-                │                          └───────────────┬───────────────┘               │        │
-                │                              construir_revenue_diario                    │        │
-                │                                          └──────────► validar_carga ◄────┘        │
-                │                                                             │                     │
-                │                                                limpiar_temporales (teardown)      │
+ data/raw/      │  prepare_tmp_dir (setup)                     create_dwh_tables                     │
+ data.csv ──────┼─► wait_for_sales_file ───► extract_daily_sales ───┐                                │
+ online_retail ─┼─► wait_for_history_file ─► extract_history ───────┼─► transform_and_merge          │
+ seeds/*.csv ───┼──────────────────────────► extract_category_rules ┘            │                   │
+                │                                                         check_quality              │
+                │                                            ┌───────────────────┴──────────┐        │
+                │                                       load_staging                load_rejections  │
+                │                                            │                              │        │
+                │                                     load_dimensions                       │        │
+                │                              ┌─────────────┴─────────────┐                │        │
+                │                       load_sales_fact            load_returns_fact        │        │
+                │                              └─────────────┬─────────────┘                │        │
+                │                                   build_daily_revenue                     │        │
+                │                                            └──────────► validate_load ◄───┘        │
+                │                                                               │                    │
+                │                                                     cleanup_tmp (teardown)         │
                 └────────────────────────────────────────────────────────────────────────────────────┘
                                                       │
                                                       ▼
-                         PostgreSQL DWH: staging.* → dwh.* (estrella) + audit.*
+                         PostgreSQL DWH: staging.* → dwh.* (star) + audit.*
 ```
 
-| Tarea | Qué hace |
+| Task | What it does |
 |---|---|
-| `esperar_archivo_*` | `FileSensor` (Connection `fs_datamart`) espera el CSV hasta 10 minutos, en modo `reschedule` |
-| `extraer_*` | Lee el CSV (detecta el encoding), lleva las columnas a un esquema común y guarda Parquet en `data/tmp/<run_id>/` |
-| `extraer_reglas_categoria` | Lee la semilla de categorías (estrategia en lugar de la API opcional) |
-| `transformar_y_unificar` | Normaliza códigos, clientes y países, pasa fechas a UTC, marca rechazos, deduplica entre fuentes y arma la dimensión producto |
-| `validar_calidad` | Separa ventas y devoluciones y valida el contrato de datos y el umbral de rechazos |
-| `cargar_staging` / `cargar_rechazos` | `COPY` masivo a `staging.*` y al log `audit.rejected_records` |
-| `cargar_dimensiones` | Upsert de fechas, productos, clientes y países |
-| `cargar_hecho_*` | Delete-insert de `sales_fact` y `returns_fact` en una transacción |
-| `construir_revenue_diario` | Reconstruye bruto, devoluciones y neto por producto y día |
-| `validar_carga` | Chequeos SQL post-carga y registro en `audit.pipeline_runs` |
-| `limpiar_temporales` | Borra los Parquet del run aunque algo falle |
+| `wait_for_*_file` | `FileSensor` (Connection `fs_datamart`) waits up to 10 minutes for the CSV, in `reschedule` mode |
+| `extract_*` | Reads the CSV (detects the encoding), maps the columns to a common schema and saves Parquet in `data/tmp/<run_id>/` |
+| `extract_category_rules` | Reads the category seed (used instead of the optional API) |
+| `transform_and_merge` | Normalizes codes, customers and countries, converts dates to UTC, tags rejections, dedupes across sources and builds the product dimension |
+| `check_quality` | Splits sales and returns and checks the data contract and the rejection threshold |
+| `load_staging` / `load_rejections` | Bulk `COPY` into `staging.*` and into the `audit.rejected_records` log |
+| `load_dimensions` | Upsert of dates, products, customers and countries |
+| `load_*_fact` | Delete-insert of `sales_fact` and `returns_fact` in one transaction |
+| `build_daily_revenue` | Rebuilds gross, returns and net revenue per product and day |
+| `validate_load` | Post-load SQL checks and entry in `audit.pipeline_runs` |
+| `cleanup_tmp` | Deletes the run's Parquet files even if something failed |
 
-Todas las tareas tienen `retries=2` con espera exponencial; el DAG tiene `max_active_runs=1` y `catchup=False`.
+Every task has `retries=2` with exponential backoff; the DAG has `max_active_runs=1` and `catchup=False`.
 
 ---
 
-## 5. Proceso ETL
+## 5. ETL process
 
 ### Extract
-Cada fuente se lee como texto (`dtype=str`) para no inferir tipos a ciegas. Si UTF-8 falla se reintenta con ISO-8859-1. Las columnas se renombran a un esquema común (`InvoiceNo`/`Invoice` → `invoice_no`, `UnitPrice`/`Price` → `unit_price`, `CustomerID`/`Customer ID` → `customer_id`) y se guarda el número de fila original para trazabilidad.
+Each source is read as text (`dtype=str`) so types are not guessed blindly. If UTF-8 fails it retries with ISO-8859-1. Columns are renamed to a common schema (`InvoiceNo`/`Invoice` → `invoice_no`, `UnitPrice`/`Price` → `unit_price`, `CustomerID`/`Customer ID` → `customer_id`) and the original row number is kept for traceability.
 
 ### Transform
-1. Códigos en mayúsculas y sin espacios; descripciones sin espacios repetidos.
-2. CustomerID como texto entero (`17850.0` → `17850`); vacío = cliente ANONIMO.
-3. Fechas con formato explícito por fuente → `Europe/London` → **UTC**.
-4. Países normalizados con `seeds/country_mapping.csv`.
-5. Cada fila recibe un motivo de rechazo o queda válida (ver tabla en [decisiones técnicas](docs/decisiones_tecnicas.md#motivos-de-rechazo-se-evalúan-en-orden-gana-el-primero)).
-6. `row_hash` = MD5 de la clave natural; duplicados dentro de cada fuente y entre fuentes (gana `data.csv`).
-7. Nombre canónico (descripción más frecuente) y categoría por palabra clave.
+1. Codes uppercased with no spaces; descriptions without repeated spaces.
+2. CustomerID as an integer string (`17850.0` → `17850`); empty = ANONYMOUS customer.
+3. Dates with an explicit format per source → `Europe/London` → **UTC**.
+4. Countries normalized with `seeds/country_mapping.csv`.
+5. Each row gets a rejection reason or stays valid (see the table in the [technical decisions](docs/decisiones_tecnicas.md#motivos-de-rechazo-se-evalúan-en-orden-gana-el-primero)).
+6. `row_hash` = MD5 of the natural key; duplicates within each source and across sources (`data.csv` wins).
+7. Canonical name (most frequent description) and category by keyword.
 
-### Validaciones
-Contrato de datos antes de cargar (columnas, llaves únicas, nulos, precio y cantidad, cuadre de filas, umbral de rechazos) y chequeos SQL después de cargar.
+### Checks
+Data contract before loading (columns, unique keys, nulls, price and quantity, row reconciliation, rejection threshold) and SQL checks after loading.
 
 ### Load
-`COPY` a tablas `staging` → upsert de dimensiones → delete-insert de hechos con JOIN a las dimensiones → agregado diario. Todo dentro de transacciones.
+`COPY` into `staging` tables → dimension upsert → fact delete-insert joined to the dimensions → daily aggregate. All inside transactions.
 
 ---
 
-## 6. Modelo de datos
+## 6. Data model
 
-Esquema estrella con **dos hechos separados** (ventas y devoluciones) que comparten cuatro dimensiones, más un agregado diario de revenue neto.
+Star schema with **two separate facts** (sales and returns) sharing four dimensions, plus a daily net revenue aggregate.
 
 ```
                dates_dim          products_dim
@@ -200,99 +204,100 @@ Esquema estrella con **dos hechos separados** (ventas y devoluciones) que compar
           daily_product_revenue_agg (id_date, id_product)
 ```
 
-- Diagrama completo: [`docs/modelo_datos.md`](docs/modelo_datos.md) (se dibuja en GitHub) y [`docs/modelo_datos.dbml`](docs/modelo_datos.dbml) para dbdiagram.io.
-- DDL: [`sql/ddl/`](sql/ddl). Corre al crear el contenedor (`docker-entrypoint-initdb.d`) y otra vez en la tarea `crear_tablas_dwh` (todo es `IF NOT EXISTS`).
-- Por qué este diseño: [`docs/decisiones_tecnicas.md`](docs/decisiones_tecnicas.md#2-modelo-del-repositorio-analítico).
+- Full diagram: [`docs/modelo_datos.md`](docs/modelo_datos.md) (rendered on GitHub) and [`docs/modelo_datos.dbml`](docs/modelo_datos.dbml) for dbdiagram.io.
+- DDL: [`sql/ddl/`](sql/ddl). Runs when the container is created (`docker-entrypoint-initdb.d`) and again in the `create_dwh_tables` task (everything is `IF NOT EXISTS`).
+- Why this design: [`docs/decisiones_tecnicas.md`](docs/decisiones_tecnicas.md#2-modelo-del-repositorio-analítico).
 
 ---
 
-## 7. Decisiones técnicas y casos ambiguos
+## 7. Technical decisions and ambiguous cases
 
-Resumen; la justificación completa, con cifras y alternativas descartadas, está en **[`docs/decisiones_tecnicas.md`](docs/decisiones_tecnicas.md)**.
+Summary; the full reasoning, with numbers and discarded alternatives, is in **[`docs/decisiones_tecnicas.md`](docs/decisiones_tecnicas.md)**.
 
-| Caso | Decisión |
+| Case | Decision |
 |---|---|
-| Transacciones sin CustomerID (24,9 %) | Se incluyen con el cliente genérico `ANONIMO` (`id_customer = -1`): excluirlas borraría el 14,7 % del revenue |
-| Descripciones distintas para un código | Nombre canónico = la más frecuente en mayúsculas; empate → la más reciente. Se guarda el número de variantes |
-| Fuentes que se solapan | Clave natural compuesta normalizada; si la línea está en ambas, gana `data.csv` |
-| Códigos POST, DOT, M, D, BANK CHARGES... | Rechazo `codigo_no_producto` |
-| Venta con precio ≤ 0 | Rechazo `precio_no_positivo` en `audit.rejected_records` |
-| Categoría sin API | Semilla de reglas por palabra clave con prioridad (`seeds/category_rules.csv`) |
-| Idempotencia | Transformación determinística + upsert de dimensiones + delete-insert de hechos + `row_hash` como PK. Probado: dos ejecuciones dan exactamente las mismas filas |
+| Transactions without CustomerID (24.9 %) | Kept with the generic `ANONYMOUS` customer (`id_customer = -1`): dropping them would remove 14.7 % of revenue |
+| Different descriptions for one code | Canonical name = the most frequent one in uppercase; on a tie → the most recent. The number of variants is stored |
+| Overlapping sources | Normalized composite natural key; if a line is in both, `data.csv` wins |
+| POST, DOT, M, D, BANK CHARGES... codes | Rejected as `not_a_product_code` |
+| Sale with price ≤ 0 | Rejected as `non_positive_price` in `audit.rejected_records` |
+| Category without an API | Keyword rules seed with priority (`seeds/category_rules.csv`) |
+| Idempotency | Deterministic transform + dimension upsert + fact delete-insert + `row_hash` as PK. Tested: two runs leave exactly the same rows |
 
 ---
 
-## 8. Preguntas de negocio
+## 8. Business questions
 
-Una consulta por pregunta en [`sql/consultas/`](sql/consultas); respuestas con cifras en **[`docs/respuestas_negocio.md`](docs/respuestas_negocio.md)**.
+One query per question in [`sql/queries/`](sql/queries); answers with numbers in **[`docs/respuestas_negocio.md`](docs/respuestas_negocio.md)**.
 
-| # | Pregunta | Consulta | Respuesta corta |
+| # | Question | Query | Short answer |
 |---|---|---|---|
-| 1 | Evolución mensual de ventas netas | `q1_ventas_netas_mensuales.sql` | Pico en noviembre 2011 (1,43 M); sep-nov = 35 % del año |
-| 2 | Categorías por revenue y devoluciones | `q2_categorias_revenue_devoluciones.sql` | Hogar = 59,8 % del bruto; Papelería la de más devolución (16,2 %) |
-| 3 | Top 10 neto y top 10 tasa de devolución | `q3_top_productos.sql` | #1 REGENCY CAKESTAND (164 mil neto) |
-| 4 | Países y ticket promedio | `q4_paises_ticket_promedio.sql` | Reino Unido = 90,5 % de facturas; Países Bajos ticket 3.053 |
-| 5 | Identificados vs. sin CustomerID | `q5_clientes_identificados_vs_anonimos.sql` | Sin cliente: ticket 1.101 vs 475, 96 productos por factura |
-| 6 | Descripciones inconsistentes y códigos únicos | `q6_descripciones_inconsistentes.sql` | 3.927 códigos; 637 (16,2 %) inconsistentes |
-| 7 | Recomendación al equipo de producto | `q7_recomendacion_producto.sql` | Dos pedidos cancelados = 51,7 % de las devoluciones → tope de cantidad por línea |
+| 1 | Monthly net sales trend | `q1_monthly_net_sales.sql` | Peak in November 2011 (1.43 M); Sep-Nov = 35 % of the year |
+| 2 | Categories by revenue and returns | `q2_category_revenue_returns.sql` | Home = 59.8 % of gross; Stationery has the most returns (16.2 %) |
+| 3 | Top 10 by net revenue and top 10 by return rate | `q3_top_products.sql` | #1 REGENCY CAKESTAND (164k net) |
+| 4 | Countries and average ticket | `q4_country_avg_ticket.sql` | United Kingdom = 90.5 % of invoices; Netherlands ticket 3,053 |
+| 5 | Identified vs. no CustomerID | `q5_identified_vs_anonymous.sql` | No customer: ticket 1,101 vs 475, 96 products per invoice |
+| 6 | Inconsistent descriptions and unique codes | `q6_inconsistent_descriptions.sql` | 3,927 codes; 637 (16.2 %) inconsistent |
+| 7 | Recommendation to the product team | `q7_product_recommendation.sql` | Two cancelled orders = 51.7 % of returns → cap quantity per line |
 
 ---
 
-## 9. Desarrollo local con uv
+## 9. Local development with uv
 
-El código del ETL se puede probar sin Docker. El entorno virtual se maneja con [uv](https://docs.astral.sh/uv/) y usa **las mismas versiones** que trae la imagen de Airflow 3.1.5 (pandas 2.1.4, SQLAlchemy 1.4.54, pyarrow 18.1.0).
+The ETL code can be tested without Docker. The virtual environment is managed with [uv](https://docs.astral.sh/uv/) and uses **the same versions** shipped in the Airflow 3.1.5 image (pandas 2.1.4, SQLAlchemy 1.4.54, pyarrow 18.1.0).
 
 ```bash
-uv sync                                        # crea .venv con dependencias y herramientas de desarrollo
-uv run pytest                                  # pruebas de reglas de negocio (el test del DAG se omite sin Airflow)
+uv sync                                        # creates .venv with dependencies and dev tools
+uv run pytest                                  # business rule tests (the DAG test is skipped without Airflow)
 uv run ruff check . && uv run ruff format --check .
-uv run python scripts/explorar_fuentes.py      # perfil de las dos fuentes
+uv run python scripts/explore_sources.py       # profile of the two sources
 ```
 
-Airflow no se instala en el entorno local a propósito: es pesado y ya corre en Docker. Por eso la lógica vive en `include/datamart/` (pandas + SQL puros) y el DAG solo orquesta.
+Airflow is not installed in the local environment on purpose: it is heavy and already runs in Docker. That's why the logic lives in `include/datamart/` (plain pandas + SQL) and the DAG only orchestrates.
 
 ---
 
-## 10. Estructura del repositorio
+## 10. Repository layout
 
 ```
 practice-test-airflow/
-├── docker-compose.yml          # Airflow 3.1.5 + Postgres de metadatos + Postgres DWH
-├── .env.example                # Variables de entorno necesarias (el .env real está en .gitignore)
-├── pyproject.toml / uv.lock    # Entorno local con uv
+├── docker-compose.yml          # Airflow 3.1.5 + metadata Postgres + DWH Postgres
+├── .env.example                # Required environment variables (the real .env is in .gitignore)
+├── pyproject.toml / uv.lock    # Local environment with uv
 ├── airflow/init/
-│   ├── inicializar_airflow.sh  # Connections + Variables al arrancar
-│   └── variables.json          # Valores iniciales de las Airflow Variables
+│   ├── init_airflow.sh         # Connections + Variables on startup
+│   └── variables.json          # Initial values of the Airflow Variables
 ├── dags/
-│   └── datamart_etl_dag.py     # Orquestación (solo define tareas y dependencias)
-├── include/datamart/           # Lógica del ETL
-│   ├── configuracion.py        # Rutas, ids de Airflow, reglas y motivos de rechazo
-│   ├── extraccion.py           # Lectura de CSV y semillas
-│   ├── transformacion.py       # Limpieza, UTC, deduplicación, nombre canónico, categoría
-│   ├── calidad.py              # Ventas vs devoluciones y contrato de datos
-│   ├── carga.py                # COPY, upserts, delete-insert, agregado y validación
-│   └── utilidades.py           # Helpers de log
+│   └── datamart_etl_dag.py     # Orchestration (only tasks and dependencies)
+├── include/datamart/           # ETL logic
+│   ├── config.py               # Paths, Airflow ids, rules and rejection reasons
+│   ├── extract.py              # Reading CSVs and seeds
+│   ├── transform.py            # Cleaning, UTC, dedup, canonical name, category
+│   ├── quality.py              # Sales vs returns and data contract
+│   ├── load.py                 # COPY, upserts, delete-insert, aggregate and checks
+│   └── log_utils.py            # Logging helpers
 ├── sql/
-│   ├── ddl/                    # Esquemas y tablas (se ejecutan al iniciar el DWH)
-│   └── consultas/              # Una consulta por pregunta de negocio
-├── seeds/                      # Reglas de categoría y mapeo de países
-├── data/raw/                   # Fuentes CSV comprimidas
-├── docs/                       # Decisiones, exploración, modelo y respuestas
-├── scripts/explorar_fuentes.py # Exploración de datos
-├── tests/                      # Pruebas con pytest
-├── config/ logs/ plugins/      # Carpetas que monta Airflow
-└── README.md
+│   ├── ddl/                    # Schemas and tables (run when the DWH starts)
+│   └── queries/                # One query per business question
+├── seeds/                      # Category rules and country mapping
+├── data/raw/                   # Kaggle source CSVs
+├── docs/                       # Decisions, exploration, model and answers (Spanish)
+├── scripts/explore_sources.py  # Data exploration
+├── tests/                      # pytest tests
+├── config/ logs/ plugins/      # Folders mounted by Airflow
+└── README.md / README.es.md    # Docs in English and Spanish
 ```
 
 ---
 
-## 11. Solución de problemas
+## 11. Troubleshooting
 
-| Síntoma | Causa probable | Solución |
+| Symptom | Likely cause | Fix |
 |---|---|---|
-| `airflow-init` falla con `Permission denied` en `logs/` (Linux) | UID distinto al de la imagen | `echo "AIRFLOW_UID=$(id -u)" >> .env` y `docker compose up -d` |
-| `Define DWH_PASSWORD en .env` al levantar | No existe `.env` | `cp .env.example .env` |
-| Las tablas del DWH no se crean | El volumen ya existía de una ejecución anterior | `docker compose down -v` y levantar de nuevo (igual la tarea `crear_tablas_dwh` las crea) |
-| La tarea `transformar_y_unificar` se queda sin memoria | Docker con poca RAM | Asignar al menos 4 GB a Docker |
-| `airflow-init` falla con `set: pipefail: invalid option name` o `$'\r': command not found` (Windows) | El repositorio se clonó con finales de línea CRLF | Con `.gitattributes` ya no pasa en un clon nuevo. En una copia existente: `git rm -r --cached . -q` y `git reset --hard` (descarta cambios locales sin commit) y luego `docker compose up -d` |
-| El puerto 5433 u 8080 está ocupado | Otro servicio local | Cambiar `DWH_HOST_PORT` en `.env` o el puerto del api-server en el compose |
+| `airflow-init` fails with `Permission denied` on `logs/` (Linux) | UID different from the image's | `echo "AIRFLOW_UID=$(id -u)" >> .env` and `docker compose up -d` |
+| `Define DWH_PASSWORD in .env` on startup | There is no `.env` | `cp .env.example .env` |
+| The DWH tables are not created | The volume already existed from a previous run | `docker compose down -v` and start again (the `create_dwh_tables` task creates them anyway) |
+| The `transform_and_merge` task runs out of memory | Docker has too little RAM | Give Docker at least 4 GB |
+| `airflow-init` fails with `set: pipefail: invalid option name` or `$'\r': command not found` (Windows) | The repo was cloned with CRLF line endings | With `.gitattributes` this no longer happens on a fresh clone. On an existing copy: `git rm -r --cached . -q` and `git reset --hard` (discards uncommitted changes), then `docker compose up -d` |
+| The DAG fails after updating the repo (Variable names, tables or values changed) | The metadata DB and the DWH still hold data from the previous version | `docker compose down -v` and `docker compose up -d` to start from scratch |
+| Port 5433 or 8080 is taken | Another local service | Change `DWH_HOST_PORT` in `.env` or the api-server port in the compose file |
