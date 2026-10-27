@@ -1,0 +1,21 @@
+# Normaliza finales de línea: todo el texto se guarda en LF en el repositorio.
+* text=auto
+
+# Archivos que se ejecutan o se leen dentro de los contenedores Linux: siempre LF,
+# aunque el repositorio se clone en Windows (con CRLF, bash falla con "$'\r'" o
+# "set: pipefail: invalid option name").
+*.sh    text eol=lf
+*.py    text eol=lf
+*.sql   text eol=lf
+*.json  text eol=lf
+*.csv   text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.cfg   text eol=lf
+*.toml  text eol=lf
+*.lock  text eol=lf
+.env*   text eol=lf
+
+# Binarios
+*.gz    binary
+*.png   binary
