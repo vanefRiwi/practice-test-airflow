@@ -1,4 +1,4 @@
-"""Extracción: lee cada CSV fuente y lo lleva a un esquema de columnas común."""
+"""Lectura de los CSV y de los archivos de seeds."""
 
 from pathlib import Path
 
@@ -9,10 +9,10 @@ from datamart.utilidades import formato_numero, sub, titulo
 
 
 def _leer_csv_con_encoding(ruta):
-    """Lee el CSV como texto; si no es UTF-8 reintenta en ISO-8859-1 (caso data.csv de Kaggle)."""
+    """Lee el CSV como texto. data.csv de Kaggle viene en ISO-8859-1."""
     for encoding in ("utf-8", "ISO-8859-1"):
         try:
-            # dtype=str: nada se infiere al leer, cada tipo se decide en la transformación.
+            # todo como texto, los tipos se ponen en la transformación
             return pd.read_csv(ruta, dtype=str, encoding=encoding), encoding
         except UnicodeDecodeError:
             sub(f"{Path(ruta).name} no es {encoding}, se reintenta con otro encoding")
@@ -33,14 +33,14 @@ def estandarizar_columnas(df, fuente):
         raise ValueError(f"La fuente {fuente} no trae las columnas {faltantes}")
 
     df = df[cfg.COLUMNAS_ESTANDAR].copy()
-    # Trazabilidad: número de fila en el archivo original (1 = primera fila de datos).
+    # número de fila en el CSV original, para poder rastrear los rechazos
     df.insert(0, "source_row", range(1, len(df) + 1))
     df.insert(0, "source_system", fuente)
     return df
 
 
 def extraer_fuente(ruta_csv, fuente, ruta_salida):
-    """Lee una fuente CSV, la estandariza y la guarda en Parquet para la siguiente tarea."""
+    """Lee una fuente, le pone los nombres de columna comunes y la guarda en parquet."""
     titulo(f"EXTRACCIÓN - {fuente}")
     df, encoding = _leer_csv_con_encoding(ruta_csv)
     sub(f"Archivo: {ruta_csv} | encoding: {encoding}")
@@ -56,7 +56,7 @@ def extraer_fuente(ruta_csv, fuente, ruta_salida):
 
 
 def leer_reglas_categoria(ruta=cfg.ARCHIVO_REGLAS_CATEGORIA):
-    """Lee la semilla de reglas palabra clave -> categoría (estrategia sin API de productos)."""
+    """Reglas palabra clave -> categoría."""
     reglas = pd.read_csv(ruta, dtype={"priority": int, "keyword": str, "category": str})
     reglas["keyword"] = reglas["keyword"].str.strip().str.upper()
     if reglas.duplicated(subset=["keyword"]).any():
@@ -65,7 +65,7 @@ def leer_reglas_categoria(ruta=cfg.ARCHIVO_REGLAS_CATEGORIA):
 
 
 def leer_mapeo_paises(ruta=cfg.ARCHIVO_MAPEO_PAISES):
-    """Lee la semilla que normaliza nombres de país (EIRE -> Ireland, RSA -> South Africa)."""
+    """Mapeo de nombres de país (EIRE -> Ireland, RSA -> South Africa)."""
     mapeo = pd.read_csv(ruta, dtype=str)
     return dict(
         zip(mapeo["source_name"].str.strip(), mapeo["country_name"].str.strip(), strict=True)

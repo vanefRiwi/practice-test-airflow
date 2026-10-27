@@ -1,4 +1,4 @@
-"""Transformación: limpieza, normalización, UTC, deduplicación y enriquecimiento de las fuentes."""
+"""Limpieza y unificación de las dos fuentes."""
 
 import hashlib
 import re
@@ -15,23 +15,23 @@ from datamart.utilidades import formato_numero, sub, titulo
 
 
 def normalizar_codigo(serie):
-    """Códigos de producto en mayúsculas y sin espacios (regla de negocio)."""
+    """Mayúsculas y sin espacios."""
     return serie.str.upper().str.replace(r"\s+", "", regex=True).replace("", pd.NA)
 
 
 def normalizar_texto(serie):
-    """Quita espacios a los lados y colapsa espacios repetidos, conservando mayúsculas."""
+    """Quita espacios sobrantes sin cambiar mayúsculas."""
     return serie.str.strip().str.replace(r"\s+", " ", regex=True).replace("", pd.NA)
 
 
 def normalizar_cliente(serie):
-    """CustomerID llega como '17850' o '17850.0': se deja como texto entero ('17850')."""
+    """17850.0 -> '17850'."""
     numerico = pd.to_numeric(serie, errors="coerce")
     return numerico.astype("Int64").astype("string")
 
 
 def parsear_fechas(serie, formatos):
-    """Parsea con formatos explícitos en orden; lo que ningún formato entiende queda NaT."""
+    """Prueba los formatos en orden; lo que no se pueda leer queda NaT."""
     resultado = pd.Series(pd.NaT, index=serie.index, dtype="datetime64[ns]")
     for formato in formatos:
         pendientes = resultado.isna() & serie.notna()
@@ -44,11 +44,8 @@ def parsear_fechas(serie, formatos):
 
 
 def convertir_a_utc(fechas_locales, zona_horaria):
-    """Localiza la hora de la tienda (Europe/London) y la convierte a UTC.
-
-    En el cambio de horario de octubre una hora se repite: se asume horario estándar
-    (ambiguous=False). En marzo una hora no existe: se corre hacia adelante.
-    """
+    """Hora de Londres -> UTC."""
+    # cambio de hora: en octubre se toma la hora de invierno, en marzo se corre hacia adelante
     ambiguas = np.zeros(len(fechas_locales), dtype=bool)
     return fechas_locales.dt.tz_localize(
         zona_horaria, ambiguous=ambiguas, nonexistent="shift_forward"
@@ -56,7 +53,7 @@ def convertir_a_utc(fechas_locales, zona_horaria):
 
 
 def calcular_row_hash(df):
-    """Hash MD5 de la clave natural de una línea de factura (misma línea = mismo hash)."""
+    """MD5 de factura, código, cantidad, precio, fecha y cliente."""
     clave = (
         df["invoice_no"].astype(str)
         + "|"
@@ -79,7 +76,7 @@ def calcular_row_hash(df):
 
 
 def normalizar_fuente(df, zona_horaria, mapeo_paises):
-    """Tipa y normaliza una fuente estandarizada y marca el motivo de rechazo de cada fila."""
+    """Limpia una fuente y marca el motivo de rechazo de cada fila."""
     fuente = df["source_system"].iloc[0] if len(df) else "desconocida"
     sub(f"Normalizando {fuente}: {formato_numero(len(df))} filas")
     out = df.copy()
@@ -99,7 +96,7 @@ def normalizar_fuente(df, zona_horaria, mapeo_paises):
     fechas_locales = parsear_fechas(out["invoice_date_raw"], cfg.FORMATOS_FECHA[fuente])
     out["invoice_ts_utc"] = convertir_a_utc(fechas_locales, zona_horaria)
 
-    # Motivo de rechazo: se evalúa en orden y gana el primero que aplica.
+    # Si una fila tiene varios problemas se queda con el primer motivo
     motivo = pd.Series(pd.NA, index=out.index, dtype="object")
 
     # 1. Campos obligatorios
@@ -114,7 +111,7 @@ def normalizar_fuente(df, zona_horaria, mapeo_paises):
     # 2. Fecha que no se pudo interpretar
     motivo[motivo.isna() & out["invoice_ts_utc"].isna()] = cfg.MOTIVO_FECHA_INVALIDA
 
-    # 3. Códigos que no son producto (portes, comisiones, vales, ajustes manuales)
+    # 3. Códigos que no son producto
     es_producto = out["stock_code"].str.match(cfg.PATRON_CODIGO_PRODUCTO).fillna(False)
     motivo[motivo.isna() & ~es_producto] = cfg.MOTIVO_CODIGO_NO_PRODUCTO
 
@@ -122,7 +119,7 @@ def normalizar_fuente(df, zona_horaria, mapeo_paises):
     venta_sin_precio = (out["quantity"] > 0) & (out["unit_price"] <= 0)
     motivo[motivo.isna() & venta_sin_precio.fillna(False)] = cfg.MOTIVO_PRECIO_NO_POSITIVO
 
-    # 5. Una devolución puede valer 0 (ajuste de inventario) pero no tener precio negativo
+    # 5. Devolución con precio negativo (precio 0 sí se acepta, son ajustes de inventario)
     devolucion_negativa = (out["quantity"] <= 0) & (out["unit_price"] < 0)
     motivo[motivo.isna() & devolucion_negativa.fillna(False)] = (
         cfg.MOTIVO_PRECIO_NEGATIVO_DEVOLUCION
@@ -130,7 +127,7 @@ def normalizar_fuente(df, zona_horaria, mapeo_paises):
 
     out["rejection_reason"] = motivo
 
-    # 6. Duplicados dentro de la misma fuente: misma clave natural -> se conserva la primera
+    # 6. Duplicados dentro del mismo archivo, se deja la primera
     validas = out["rejection_reason"].isna()
     out["row_hash"] = pd.NA
     out.loc[validas, "row_hash"] = calcular_row_hash(out.loc[validas])
@@ -147,7 +144,7 @@ def normalizar_fuente(df, zona_horaria, mapeo_paises):
 
 
 def resolver_duplicados_entre_fuentes(ventas, historico):
-    """Une las fuentes válidas; si una línea está en ambas, gana el volcado diario."""
+    """Si una línea está en las dos fuentes se queda la de data.csv."""
     hashes_ventas = set(ventas["row_hash"])
     repetida = historico["row_hash"].isin(hashes_ventas)
     sub(
@@ -164,16 +161,11 @@ def resolver_duplicados_entre_fuentes(ventas, historico):
 
 
 def construir_productos(lineas, reglas_categoria, descripciones_fuente):
-    """Un registro por stock_code con descripción canónica, variantes y categoría.
-
-    El nombre canónico sale de las líneas válidas; las variantes se cuentan sobre todas
-    las filas de las fuentes con código de producto (también las rechazadas), porque la
-    pregunta de negocio es cómo llegan escritas las descripciones.
-    """
+    """Una fila por stock_code con su nombre, variantes y categoría."""
+    # las variantes se cuentan con todas las filas, también las rechazadas
     con_descripcion = lineas.dropna(subset=["description_norm"])
 
-    # Nombre canónico = la descripción (en mayúsculas) más usada para el código;
-    # en empate gana la más reciente y luego el orden alfabético (regla determinística).
+    # Nombre = la descripción más usada; si hay empate, la más reciente
     frecuencias = (
         con_descripcion.groupby(["stock_code", "description_norm"])
         .agg(veces=("row_hash", "size"), ultima_vez=("invoice_ts_utc", "max"))
@@ -185,7 +177,6 @@ def construir_productos(lineas, reglas_categoria, descripciones_fuente):
     )
     canonica = frecuencias.drop_duplicates("stock_code").set_index("stock_code")["description_norm"]
 
-    # Variantes = formas distintas de escribir la descripción tal como llegó (mayúsculas incluidas)
     variantes = (
         descripciones_fuente.dropna(subset=["description"])
         .groupby("stock_code")["description"]
@@ -202,10 +193,10 @@ def construir_productos(lineas, reglas_categoria, descripciones_fuente):
 
 
 def asignar_categoria(descripciones, reglas):
-    """Asigna categoría por palabra clave; se aplica la regla de menor prioridad que coincida."""
+    """Categoría por palabra clave, gana la regla con menor prioridad."""
     categoria = pd.Series(pd.NA, index=descripciones.index, dtype="object")
     for regla in reglas.itertuples():
-        # \b = límite de palabra: "CARD" no coincide dentro de "CARDIGAN"
+        # \b para que CARD no coincida con CARDIGAN
         patron = rf"\b{re.escape(regla.keyword)}\b"
         coincide = descripciones.str.contains(patron, regex=True, na=False)
         categoria[categoria.isna() & coincide] = regla.category
@@ -220,7 +211,7 @@ COLUMNAS_RAW = cfg.COLUMNAS_ESTANDAR
 
 
 def _rechazos(df):
-    """Arma el log de rechazos guardando el registro original como JSON."""
+    """Filas rechazadas con el registro original en JSON."""
     rechazadas = df[df["rejection_reason"].notna()]
     raw = rechazadas[COLUMNAS_RAW].to_json(orient="records", lines=True, force_ascii=False)
     return pd.DataFrame(
@@ -234,7 +225,7 @@ def _rechazos(df):
 
 
 def transformar_y_unificar(ventas_raw, historico_raw, reglas_categoria, mapeo_paises, zona):
-    """Aplica todas las reglas y devuelve líneas válidas, rechazos, productos y métricas."""
+    """Devuelve líneas válidas, rechazos, productos y métricas."""
     titulo("TRANSFORMACIÓN Y UNIFICACIÓN")
 
     ventas = normalizar_fuente(ventas_raw, zona, mapeo_paises)
@@ -248,7 +239,6 @@ def transformar_y_unificar(ventas_raw, historico_raw, reglas_categoria, mapeo_pa
         ventas_validas, historico_valido
     )
 
-    # Filas de ambas fuentes con un código de producto real (para contar variantes)
     descripciones_fuente = pd.concat(
         [
             df.loc[
@@ -278,7 +268,7 @@ def transformar_y_unificar(ventas_raw, historico_raw, reglas_categoria, mapeo_pa
     ]
     lineas = lineas[columnas_lineas].reset_index(drop=True)
 
-    # Solo tipos nativos de Python: las métricas viajan por XCom (JSON)
+    # int() porque esto va por XCom y numpy no se serializa
     metricas = {
         "filas_leidas_ventas": len(ventas_raw),
         "filas_leidas_historico": len(historico_raw),

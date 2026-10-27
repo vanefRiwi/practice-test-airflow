@@ -1,4 +1,4 @@
-"""Carga al DWH: staging con COPY, upsert de dimensiones y delete-insert de hechos."""
+"""Carga al DWH en Postgres."""
 
 import io
 from pathlib import Path
@@ -14,7 +14,7 @@ from datamart.utilidades import formato_numero, sub, titulo
 
 
 def ejecutar_ddl(engine, directorio_ddl=cfg.DIRECTORIO_DDL):
-    """Ejecuta los scripts DDL en orden; son idempotentes (IF NOT EXISTS / ON CONFLICT)."""
+    """Corre los .sql de sql/ddl en orden."""
     titulo("DDL DEL REPOSITORIO ANALÍTICO")
     scripts = sorted(Path(directorio_ddl).glob("*.sql"))
     if not scripts:
@@ -26,7 +26,7 @@ def ejecutar_ddl(engine, directorio_ddl=cfg.DIRECTORIO_DDL):
 
 
 def _copiar(conexion, df, tabla, columnas):
-    """Carga masiva con COPY (mucho más rápido que INSERT fila a fila para ~1M de filas)."""
+    """COPY desde un DataFrame (to_sql era muy lento con tantas filas)."""
     buffer = io.StringIO()
     df[columnas].to_csv(buffer, index=False, header=False)
     buffer.seek(0)
@@ -46,7 +46,7 @@ def _contar(conexion, sql, **parametros):
 
 
 def cargar_staging(engine, productos, ventas, devoluciones):
-    """Vacía y llena las tablas staging en una sola transacción."""
+    """Truncate + COPY de las tablas staging."""
     titulo("CARGA A STAGING")
     with engine.begin() as conexion:
         conexion.execute(
@@ -98,7 +98,7 @@ def cargar_staging(engine, productos, ventas, devoluciones):
 
 
 def cargar_rechazos(engine, rechazos, run_id):
-    """Reemplaza el log de rechazos de las fuentes procesadas (delete-insert idempotente)."""
+    """Borra los rechazos anteriores y carga los de este run."""
     titulo("LOG DE RECHAZOS")
     rechazos = rechazos.assign(run_id=run_id)
     with engine.begin() as conexion:
@@ -117,7 +117,7 @@ def cargar_rechazos(engine, rechazos, run_id):
 
 
 # =============================================================================
-# 3. DIMENSIONES (upsert: las llaves subrogadas no cambian entre ejecuciones)
+# 3. DIMENSIONES (upsert para que los id no cambien entre runs)
 # =============================================================================
 
 SQL_DIM_FECHAS = """
@@ -189,7 +189,7 @@ ORDER BY country_name;
 
 
 def cargar_dimensiones(engine):
-    """Upsert de las 4 dimensiones a partir de staging (sin huecos en las secuencias)."""
+    """Inserta lo nuevo y actualiza lo que cambió en las dimensiones."""
     titulo("CARGA DE DIMENSIONES")
     resumen = {}
     with engine.begin() as conexion:
@@ -205,7 +205,7 @@ def cargar_dimensiones(engine):
 
 
 # =============================================================================
-# 4. HECHOS (delete-insert por fuente dentro de una transacción)
+# 4. HECHOS (delete-insert)
 # =============================================================================
 
 SQL_HECHO_VENTAS = """
@@ -240,7 +240,7 @@ ON CONFLICT (row_hash) DO NOTHING;
 
 
 def _cargar_hecho(engine, tabla_hecho, tabla_staging, sql_insert):
-    """Borra lo de las fuentes procesadas e inserta desde staging; verifica el conteo."""
+    """Delete-insert desde staging y revisa que no se pierdan filas."""
     with engine.begin() as conexion:
         esperadas = _contar(conexion, f"SELECT COUNT(*) FROM {tabla_staging}")
         borradas = conexion.execute(
@@ -252,7 +252,7 @@ def _cargar_hecho(engine, tabla_hecho, tabla_staging, sql_insert):
             f"{tabla_hecho}: borradas {formato_numero(borradas)} | insertadas "
             f"{formato_numero(insertadas)} | en staging {formato_numero(esperadas)}"
         )
-        # Si un JOIN perdió filas (dimensión faltante) se aborta y la transacción hace rollback
+        # si el JOIN perdió filas algo falta en las dimensiones -> rollback
         if insertadas != esperadas:
             raise ValueError(
                 f"{tabla_hecho}: se insertaron {insertadas} filas de {esperadas} en staging"
@@ -308,7 +308,7 @@ FULL OUTER JOIN devoluciones d
 
 
 def construir_revenue_diario(engine):
-    """Reconstruye el agregado completo (bruto, devoluciones y neto por producto y día)."""
+    """Recalcula bruto, devoluciones y neto por producto y día."""
     titulo("AGREGADO DIARIO DE REVENUE")
     with engine.begin() as conexion:
         conexion.execute(text("DELETE FROM dwh.daily_product_revenue_agg;"))
@@ -342,7 +342,7 @@ CHEQUEOS_POST_CARGA = {
 
 
 def validar_carga(engine, metricas, run_id, logical_date):
-    """Corre los chequeos SQL post-carga y registra la ejecución en audit.pipeline_runs."""
+    """Chequeos después de cargar + registro en audit.pipeline_runs."""
     titulo("VALIDACIÓN POST-CARGA")
     fallidos = []
     with engine.connect() as conexion:

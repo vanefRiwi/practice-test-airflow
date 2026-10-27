@@ -1,4 +1,4 @@
-"""Calidad: separación ventas/devoluciones y contrato de datos antes de cargar."""
+"""Separación de ventas y devoluciones y validaciones antes de cargar."""
 
 import numpy as np
 
@@ -35,7 +35,7 @@ COLUMNAS_DEVOLUCIONES = {
 
 
 def separar_ventas_devoluciones(lineas, moneda):
-    """Cantidad > 0 es venta; cantidad <= 0 es devolución o ajuste (regla de negocio)."""
+    """quantity > 0 es venta, quantity <= 0 es devolución o ajuste."""
     titulo("SEPARACIÓN VENTAS / DEVOLUCIONES")
     es_venta = lineas["quantity"] > 0
 
@@ -65,7 +65,7 @@ def separar_ventas_devoluciones(lineas, moneda):
 
 
 def validar_contrato(ventas, devoluciones, productos, rechazos, metricas, max_ratio_rechazos):
-    """Valida columnas, llaves y reglas antes de escribir; lanza ValueError si algo no cuadra."""
+    """Validate data contract before writing."""
     titulo("CONTRATO DE DATOS")
 
     # 1. Columnas esperadas exactas
@@ -85,7 +85,7 @@ def validar_contrato(ventas, devoluciones, productos, rechazos, metricas, max_ra
         if df[llave].duplicated().any():
             raise ValueError(f"Hay valores duplicados en {llave} de {nombre}.")
 
-    # 3. Campos obligatorios sin nulos (customer_code puede ser nulo: cliente anónimo)
+    # 3. Nulos (customer_code sí puede ser nulo, es el cliente anónimo)
     obligatorias = ["row_hash", "invoice_no", "invoice_ts_utc", "stock_code", "country_name"]
     for nombre, df in [("ventas", ventas), ("devoluciones", devoluciones)]:
         for columna in obligatorias:
@@ -102,14 +102,14 @@ def validar_contrato(ventas, devoluciones, productos, rechazos, metricas, max_ra
     ):
         raise ValueError("Hay líneas con productos que no están en la dimensión.")
 
-    # 5. Cuadre de filas: leídas = válidas + rechazadas + duplicadas entre fuentes
+    # 5. leídas = válidas + rechazadas + duplicadas entre fuentes
     leidas = metricas["filas_leidas_ventas"] + metricas["filas_leidas_historico"]
     explicadas = len(ventas) + len(devoluciones) + len(rechazos)
     explicadas += metricas["duplicados_entre_fuentes"]
     if leidas != explicadas:
         raise ValueError(f"No cuadran las filas: leídas {leidas} vs explicadas {explicadas}")
 
-    # 6. Umbral de calidad configurable con una Airflow Variable
+    # 6. Umbral de rechazos (Variable datamart_max_ratio_rechazos)
     ratio = len(rechazos) / leidas if leidas else 0
     sub(f"Ratio de rechazos: {ratio:.2%} (máximo permitido {max_ratio_rechazos:.2%})")
     if ratio > max_ratio_rechazos:

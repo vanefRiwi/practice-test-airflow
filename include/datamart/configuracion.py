@@ -1,4 +1,4 @@
-"""Configuración central del pipeline DataMart: rutas, ids de Airflow y reglas de negocio."""
+"""Rutas, nombres de Connections/Variables y reglas del pipeline."""
 
 import os
 from pathlib import Path
@@ -16,7 +16,7 @@ ARCHIVO_REGLAS_CATEGORIA = DIRECTORIO_SEEDS / "category_rules.csv"
 ARCHIVO_MAPEO_PAISES = DIRECTORIO_SEEDS / "country_mapping.csv"
 
 # =============================================================================
-# AIRFLOW: CONNECTIONS Y VARIABLES (los valores reales viven en .env / metastore)
+# AIRFLOW: CONNECTIONS Y VARIABLES
 # =============================================================================
 CONN_DWH = "dwh_postgres"
 CONN_ARCHIVOS = "fs_datamart"
@@ -34,7 +34,7 @@ FUENTE_VENTAS = "ventas_diarias"  # data.csv (volcado diario, tiene prioridad)
 FUENTE_HISTORICO = "historico"  # online_retail.csv (historial extendido de Kaggle)
 FUENTES = [FUENTE_VENTAS, FUENTE_HISTORICO]
 
-# Los dos CSV nombran distinto las mismas columnas: se llevan a un esquema común.
+# data.csv y online_retail.csv no usan los mismos nombres de columna
 ALIAS_COLUMNAS = {
     "invoiceno": "invoice_no",
     "invoice": "invoice_no",
@@ -59,7 +59,7 @@ COLUMNAS_ESTANDAR = [
     "country",
 ]
 
-# Formatos de fecha explícitos por fuente (se prueban en orden).
+# Formatos de fecha que se prueban en orden para cada fuente
 FORMATOS_FECHA = {
     FUENTE_VENTAS: ["%m/%d/%Y %H:%M", "%m/%d/%Y %H:%M:%S"],
     FUENTE_HISTORICO: [
@@ -73,9 +73,8 @@ FORMATOS_FECHA = {
 # =============================================================================
 # REGLAS DE NEGOCIO
 # =============================================================================
-# Un código de producto del catálogo empieza con 5 dígitos (85123A, 15056BL...) o es
-# un set de regalo DCGS. Todo lo demás (POST, DOT, M, D, C2, BANK CHARGES, AMAZONFEE,
-# GIFT_0001_xx, TEST001...) son portes, comisiones, vales o ajustes manuales.
+# Los productos empiezan con 5 dígitos (85123A, 15056BL) o son sets DCGS.
+# POST, DOT, M, D, C2, BANK CHARGES, AMAZONFEE, GIFT_0001... no son productos.
 PATRON_CODIGO_PRODUCTO = r"^(\d{5}[A-Z0-9]{0,4}|DCGS[A-Z0-9]+)$"
 
 CLIENTE_ANONIMO_ID = -1

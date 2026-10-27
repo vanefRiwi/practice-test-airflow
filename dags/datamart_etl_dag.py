@@ -1,4 +1,4 @@
-"""DAG diario de DataMart S.A.S.: CSV de ventas + histórico -> limpieza -> DWH en PostgreSQL."""
+"""DAG diario de DataMart: lee los CSV de ventas, los limpia y carga el DWH en Postgres."""
 
 import re
 import shutil
@@ -8,8 +8,7 @@ from pathlib import Path
 from airflow.providers.standard.sensors.filesystem import FileSensor
 from airflow.sdk import Variable, dag, get_current_context, setup, task, teardown
 
-# Solo la configuración se importa arriba: pandas y los módulos del ETL se importan
-# dentro de cada tarea para que el parseo del DAG (cada 30 s) sea liviano.
+# pandas y los módulos del ETL se importan dentro de cada tarea para que el DAG cargue rápido
 from datamart import configuracion as cfg
 
 ARGUMENTOS_POR_DEFECTO = {
@@ -22,14 +21,14 @@ ARGUMENTOS_POR_DEFECTO = {
 
 
 def _engine_dwh():
-    """Engine SQLAlchemy construido desde la Connection de Airflow (sin credenciales en código)."""
+    """Engine de SQLAlchemy usando la Connection dwh_postgres."""
     from airflow.providers.postgres.hooks.postgres import PostgresHook
 
     return PostgresHook(postgres_conn_id=cfg.CONN_DWH).get_sqlalchemy_engine()
 
 
 def _ruta(directorio, nombre):
-    """Ruta de un archivo intermedio del run (las tareas se pasan rutas, no DataFrames)."""
+    """Ruta del parquet intermedio de esta ejecución."""
     return str(Path(directorio) / f"{nombre}.parquet")
 
 
@@ -51,7 +50,7 @@ def datamart_etl_diario():
     @setup
     @task
     def preparar_directorio_temporal():
-        """Crea data/tmp/<run_id>/ para los archivos intermedios de esta ejecución."""
+        """Crea la carpeta data/tmp/<run_id>/ para los parquet de este run."""
         run_id = get_current_context()["run_id"]
         directorio = cfg.DIRECTORIO_TEMPORAL / re.sub(r"[^A-Za-z0-9_-]", "_", run_id)
         directorio.mkdir(parents=True, exist_ok=True)
@@ -59,7 +58,7 @@ def datamart_etl_diario():
 
     @task
     def crear_tablas_dwh():
-        """Asegura esquemas y tablas del DWH (los mismos DDL que corren al iniciar Postgres)."""
+        """Corre los DDL por si las tablas no existen."""
         from datamart import carga
 
         carga.ejecutar_ddl(_engine_dwh())
@@ -86,7 +85,7 @@ def datamart_etl_diario():
     # =========================================================================
     @task
     def extraer_ventas_diarias(directorio):
-        """Lee data.csv (volcado diario de órdenes)."""
+        """Lee data.csv."""
         from datamart import extraccion
 
         archivo = cfg.DIRECTORIO_DATOS / Variable.get(cfg.VAR_ARCHIVO_VENTAS)
@@ -96,7 +95,7 @@ def datamart_etl_diario():
 
     @task
     def extraer_historico(directorio):
-        """Lee online_retail.csv (historial extendido)."""
+        """Lee online_retail.csv."""
         from datamart import extraccion
 
         archivo = cfg.DIRECTORIO_DATOS / Variable.get(cfg.VAR_ARCHIVO_HISTORICO)
@@ -106,7 +105,7 @@ def datamart_etl_diario():
 
     @task
     def extraer_reglas_categoria(directorio):
-        """Lee la semilla de categorías (estrategia elegida en lugar de la API opcional)."""
+        """Lee las reglas de categoría de seeds/category_rules.csv."""
         from datamart import extraccion
 
         reglas = extraccion.leer_reglas_categoria()
@@ -119,7 +118,7 @@ def datamart_etl_diario():
     # =========================================================================
     @task
     def transformar_y_unificar(ventas, historico, ruta_reglas, directorio):
-        """Normaliza, pasa fechas a UTC, deduplica entre fuentes y arma la dimensión producto."""
+        """Limpia y une las dos fuentes."""
         import pandas as pd
 
         from datamart import extraccion, transformacion
@@ -139,7 +138,7 @@ def datamart_etl_diario():
 
     @task
     def validar_calidad(transformado, directorio):
-        """Separa ventas y devoluciones y aplica el contrato de datos antes de cargar."""
+        """Separa ventas de devoluciones y valida antes de cargar."""
         import pandas as pd
 
         from datamart import calidad
@@ -171,7 +170,7 @@ def datamart_etl_diario():
     # =========================================================================
     @task
     def cargar_staging(validado):
-        """COPY de productos, ventas y devoluciones a las tablas staging."""
+        """Carga productos, ventas y devoluciones a staging."""
         import pandas as pd
 
         from datamart import carga
@@ -186,7 +185,7 @@ def datamart_etl_diario():
 
     @task
     def cargar_rechazos(validado):
-        """Reemplaza el log audit.rejected_records con los rechazos de este run."""
+        """Guarda los rechazos en audit.rejected_records."""
         import pandas as pd
 
         from datamart import carga
@@ -226,7 +225,7 @@ def datamart_etl_diario():
 
     @task
     def validar_carga(validado):
-        """Chequeos SQL post-carga y registro en audit.pipeline_runs."""
+        """Revisa los conteos después de cargar y registra el run."""
         from datamart import carga
 
         contexto = get_current_context()
@@ -234,14 +233,14 @@ def datamart_etl_diario():
             _engine_dwh(),
             validado["metricas"],
             contexto["run_id"],
-            # En Airflow 3 un run manual puede no tener logical_date
+            # los runs manuales pueden venir sin logical_date
             contexto.get("logical_date"),
         )
 
     @teardown
     @task
     def limpiar_temporales(directorio):
-        """Borra los Parquet del run aunque algo haya fallado (no afecta el estado del DAG)."""
+        """Borra los parquet del run, aunque algo falle."""
         shutil.rmtree(directorio, ignore_errors=True)
 
     # =========================================================================
