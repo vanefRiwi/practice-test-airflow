@@ -1,4 +1,4 @@
-"""Pruebas de las reglas de negocio de la transformación."""
+"""Tests de las reglas de transformación."""
 
 import pandas as pd
 

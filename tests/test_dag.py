@@ -1,4 +1,4 @@
-"""Verifica que el DAG cargue sin errores (requiere Airflow; se omite si no está instalado)."""
+"""Revisa que el DAG cargue sin errores. Solo corre si Airflow está instalado."""
 
 from pathlib import Path
 

@@ -1,4 +1,4 @@
-"""Datos de prueba pequeños que imitan las dos fuentes de Kaggle."""
+"""Filas de ejemplo con el formato de cada CSV."""
 
 import pandas as pd
 import pytest
@@ -9,7 +9,7 @@ from datamart.extraccion import estandarizar_columnas
 
 @pytest.fixture
 def ventas_raw():
-    """Muestra con el formato de data.csv (fechas M/D/YYYY, CustomerID entero)."""
+    """Formato de data.csv."""
     df = pd.DataFrame(
         {
             "InvoiceNo": ["536365", "536365", "536365", "C536379", "536380", "536381", "536382"],
@@ -44,7 +44,7 @@ def ventas_raw():
 
 @pytest.fixture
 def historico_raw():
-    """Muestra con el formato de online_retail.csv (columna index, CustomerID con .0)."""
+    """Formato de online_retail.csv (trae index y CustomerID con .0)."""
     df = pd.DataFrame(
         {
             "index": ["0", "1"],

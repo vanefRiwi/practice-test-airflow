@@ -16,8 +16,8 @@ from datamart import configuracion as cfg  # noqa: E402
 from datamart.extraccion import _leer_csv_con_encoding, estandarizar_columnas  # noqa: E402
 
 FUENTES = {
-    cfg.FUENTE_VENTAS: RAIZ / "data" / "raw" / "data.csv.gz",
-    cfg.FUENTE_HISTORICO: RAIZ / "data" / "raw" / "online_retail.csv.gz",
+    cfg.FUENTE_VENTAS: RAIZ / "data" / "raw" / "data.csv",
+    cfg.FUENTE_HISTORICO: RAIZ / "data" / "raw" / "online_retail.csv",
 }
 
 

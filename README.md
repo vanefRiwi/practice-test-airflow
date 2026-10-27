@@ -68,8 +68,8 @@ También se ven en la UI: **Admin → Connections** y **Admin → Variables**.
 
 | Variable | Valor inicial | Para qué |
 |---|---|---|
-| `datamart_archivo_ventas` | `raw/data.csv.gz` | Archivo diario de órdenes |
-| `datamart_archivo_historico` | `raw/online_retail.csv.gz` | Historial extendido |
+| `datamart_archivo_ventas` | `raw/data.csv` | Archivo diario de órdenes |
+| `datamart_archivo_historico` | `raw/online_retail.csv` | Historial extendido |
 | `datamart_zona_horaria_origen` | `Europe/London` | Zona horaria de la fuente para convertir a UTC |
 | `datamart_max_ratio_rechazos` | `0.10` | Umbral de calidad: si se rechaza más del 10 %, el DAG falla antes de cargar |
 | `datamart_moneda` | `GBP` | Moneda de los montos |
@@ -112,10 +112,10 @@ Desde DBeaver o Power BI: host `localhost`, puerto `5433`, base `datamart_dwh` y
 
 | Fuente | Archivo | Filas | Problemas principales |
 |---|---|---:|---|
-| Ventas diarias (Kaggle `carrie1/ecommerce-data`) | `data/raw/data.csv.gz` | 541.909 | Encoding ISO-8859-1, cantidades negativas, precios ≤ 0, 24,9 % sin cliente, códigos de servicio (POST, DOT...), duplicados |
-| Historial (Kaggle `thedevastator/online-retail-transaction-dataset`) | `data/raw/online_retail.csv.gz` | 541.909 | Columna `index` extra, CustomerID decimal (`17850.0`) y **mismo periodo y líneas** que la fuente diaria |
+| Ventas diarias (Kaggle `carrie1/ecommerce-data`) | `data/raw/data.csv` | 541.909 | Encoding ISO-8859-1, cantidades negativas, precios ≤ 0, 24,9 % sin cliente, códigos de servicio (POST, DOT...), duplicados |
+| Historial (Kaggle `thedevastator/online-retail-transaction-dataset`) | `data/raw/online_retail.csv` | 541.909 | Columna `index` extra, CustomerID decimal (`17850.0`) y **mismo periodo y líneas** que la fuente diaria |
 
-Los CSV se guardan comprimidos en `.gz` (7 y 9 MB) para no superar los límites de GitHub; pandas los lee directamente. La exploración completa está en [`docs/exploracion_datos.md`](docs/exploracion_datos.md).
+Los CSV están en `data/raw/` tal como vienen de Kaggle (45 y 50 MB). La exploración completa está en [`docs/exploracion_datos.md`](docs/exploracion_datos.md).
 
 ---
 
@@ -125,7 +125,7 @@ Los CSV se guardan comprimidos en `.gz` (7 y 9 MB) para no superar los límites 
                 ┌───────────────────────── DAG datamart_etl_diario (@daily) ─────────────────────────┐
                 │                                                                                    │
  data/raw/      │ preparar_directorio_temporal (setup)        crear_tablas_dwh                       │
- data.csv.gz ───┼─► esperar_archivo_ventas ──► extraer_ventas_diarias ─┐                            │
+ data.csv ─────┼─► esperar_archivo_ventas ──► extraer_ventas_diarias ─┐                            │
  online_retail ─┼─► esperar_archivo_historico ► extraer_historico ─────┼─► transformar_y_unificar  │
  seeds/*.csv ───┼─────────────────────────────► extraer_reglas_categoria┘          │                 │
                 │                                                       validar_calidad             │

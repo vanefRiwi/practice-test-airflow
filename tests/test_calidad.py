@@ -1,4 +1,4 @@
-"""Pruebas de la separación ventas/devoluciones y del contrato de datos."""
+"""Tests de calidad."""
 
 import pytest
 

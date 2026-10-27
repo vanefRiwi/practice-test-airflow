@@ -7,7 +7,7 @@ Este documento explica **cómo se diseñó el repositorio analítico y por qué*
 ## 1. Arquitectura general
 
 ```
-data/raw/*.csv.gz ──► FileSensor ──► extracción (Parquet por run en data/tmp/<run_id>/)
+data/raw/*.csv ──► FileSensor ──► extracción (Parquet por run en data/tmp/<run_id>/)
                                        │
 seeds/*.csv ──────────────────────────►│ transformación + unificación + calidad
                                        ▼
