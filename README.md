@@ -294,4 +294,5 @@ practice-test-airflow/
 | `Define DWH_PASSWORD en .env` al levantar | No existe `.env` | `cp .env.example .env` |
 | Las tablas del DWH no se crean | El volumen ya existía de una ejecución anterior | `docker compose down -v` y levantar de nuevo (igual la tarea `crear_tablas_dwh` las crea) |
 | La tarea `transformar_y_unificar` se queda sin memoria | Docker con poca RAM | Asignar al menos 4 GB a Docker |
+| `airflow-init` falla con `set: pipefail: invalid option name` o `$'\r': command not found` (Windows) | El repositorio se clonó con finales de línea CRLF | Con `.gitattributes` ya no pasa en un clon nuevo. En una copia existente: `git rm -r --cached . -q` y `git reset --hard` (descarta cambios locales sin commit) y luego `docker compose up -d` |
 | El puerto 5433 u 8080 está ocupado | Otro servicio local | Cambiar `DWH_HOST_PORT` en `.env` o el puerto del api-server en el compose |
