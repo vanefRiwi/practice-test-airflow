@@ -1,11 +1,11 @@
 [project]
 name = "datamart-etl-airflow"
 version = "0.1.0"
-description = "Pipeline ETL de DataMart S.A.S. orquestado con Apache Airflow 3 y un Data Warehouse en PostgreSQL"
+description = "DataMart S.A.S. ETL pipeline orchestrated with Apache Airflow 3 and a PostgreSQL data warehouse"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
-# Versiones fijadas igual que las constraints de la imagen apache/airflow:3.1.5 (Python 3.12),
-# así el código se prueba en local con las mismas librerías que usa el contenedor.
+# Pinned to the same versions as the apache/airflow:3.1.5 constraints (Python 3.12),
+# so the code is tested locally with the same libraries the container uses.
 dependencies = [
     "numpy==1.26.4",
     "pandas==2.1.4",

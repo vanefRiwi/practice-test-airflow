@@ -1,6 +1,6 @@
 * text=auto
 
-# en Windows los .sh quedaban con CRLF y el airflow-init fallaba
+# on Windows the .sh files got CRLF endings and airflow-init failed
 *.sh    text eol=lf
 *.py    text eol=lf
 *.sql   text eol=lf

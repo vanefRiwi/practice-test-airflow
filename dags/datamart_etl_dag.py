@@ -1,4 +1,4 @@
-"""DAG diario de DataMart: lee los CSV de ventas, los limpia y carga el DWH en Postgres."""
+"""DataMart daily DAG: reads the sales CSVs, cleans them and loads the Postgres DWH."""
 
 import re
 import shutil
@@ -8,10 +8,10 @@ from pathlib import Path
 from airflow.providers.standard.sensors.filesystem import FileSensor
 from airflow.sdk import Variable, dag, get_current_context, setup, task, teardown
 
-# pandas y los módulos del ETL se importan dentro de cada tarea para que el DAG cargue rápido
-from datamart import configuracion as cfg
+# pandas and the ETL modules are imported inside each task so the DAG parses fast
+from datamart import config as cfg
 
-ARGUMENTOS_POR_DEFECTO = {
+DEFAULT_ARGS = {
     "owner": "data-engineering",
     "retries": 2,
     "retry_delay": timedelta(minutes=2),
@@ -20,256 +20,252 @@ ARGUMENTOS_POR_DEFECTO = {
 }
 
 
-def _engine_dwh():
-    """Engine de SQLAlchemy usando la Connection dwh_postgres."""
+def _dwh_engine():
+    """SQLAlchemy engine built from the dwh_postgres Connection."""
     from airflow.providers.postgres.hooks.postgres import PostgresHook
 
     return PostgresHook(postgres_conn_id=cfg.CONN_DWH).get_sqlalchemy_engine()
 
 
-def _ruta(directorio, nombre):
-    """Ruta del parquet intermedio de esta ejecución."""
-    return str(Path(directorio) / f"{nombre}.parquet")
+def _path(directory, name):
+    """Path of an intermediate parquet for this run."""
+    return str(Path(directory) / f"{name}.parquet")
 
 
 @dag(
-    dag_id="datamart_etl_diario",
-    description="ETL de ventas y devoluciones de DataMart hacia el repositorio analítico",
+    dag_id="datamart_daily_etl",
+    description="DataMart sales and returns ETL into the analytical warehouse",
     schedule="@daily",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     max_active_runs=1,
-    default_args=ARGUMENTOS_POR_DEFECTO,
+    default_args=DEFAULT_ARGS,
     tags=["datamart", "etl", "dwh"],
     doc_md=__doc__,
 )
-def datamart_etl_diario():
+def datamart_daily_etl():
     # =========================================================================
-    # PREPARACIÓN
+    # SETUP
     # =========================================================================
     @setup
     @task
-    def preparar_directorio_temporal():
-        """Crea la carpeta data/tmp/<run_id>/ para los parquet de este run."""
+    def prepare_tmp_dir():
+        """Creates data/tmp/<run_id>/ for this run's parquet files."""
         run_id = get_current_context()["run_id"]
-        directorio = cfg.DIRECTORIO_TEMPORAL / re.sub(r"[^A-Za-z0-9_-]", "_", run_id)
-        directorio.mkdir(parents=True, exist_ok=True)
-        return str(directorio)
+        directory = cfg.TMP_DIR / re.sub(r"[^A-Za-z0-9_-]", "_", run_id)
+        directory.mkdir(parents=True, exist_ok=True)
+        return str(directory)
 
     @task
-    def crear_tablas_dwh():
-        """Corre los DDL por si las tablas no existen."""
-        from datamart import carga
+    def create_dwh_tables():
+        """Runs the DDL in case the tables don't exist yet."""
+        from datamart import load
 
-        carga.ejecutar_ddl(_engine_dwh())
+        load.run_ddl(_dwh_engine())
 
-    esperar_archivo_ventas = FileSensor(
-        task_id="esperar_archivo_ventas",
-        fs_conn_id=cfg.CONN_ARCHIVOS,
-        filepath="{{ var.value.datamart_archivo_ventas }}",
+    wait_for_sales_file = FileSensor(
+        task_id="wait_for_sales_file",
+        fs_conn_id=cfg.CONN_FILES,
+        filepath="{{ var.value.datamart_sales_file }}",
         poke_interval=30,
         timeout=60 * 10,
         mode="reschedule",
     )
-    esperar_archivo_historico = FileSensor(
-        task_id="esperar_archivo_historico",
-        fs_conn_id=cfg.CONN_ARCHIVOS,
-        filepath="{{ var.value.datamart_archivo_historico }}",
+    wait_for_history_file = FileSensor(
+        task_id="wait_for_history_file",
+        fs_conn_id=cfg.CONN_FILES,
+        filepath="{{ var.value.datamart_history_file }}",
         poke_interval=30,
         timeout=60 * 10,
         mode="reschedule",
     )
 
     # =========================================================================
-    # EXTRACCIÓN
+    # EXTRACT
     # =========================================================================
     @task
-    def extraer_ventas_diarias(directorio):
-        """Lee data.csv."""
-        from datamart import extraccion
+    def extract_daily_sales(directory):
+        """Reads data.csv."""
+        from datamart import extract
 
-        archivo = cfg.DIRECTORIO_DATOS / Variable.get(cfg.VAR_ARCHIVO_VENTAS)
-        return extraccion.extraer_fuente(
-            archivo, cfg.FUENTE_VENTAS, _ruta(directorio, "extraido_ventas")
-        )
+        file = cfg.DATA_DIR / Variable.get(cfg.VAR_SALES_FILE)
+        return extract.extract_source(file, cfg.SOURCE_SALES, _path(directory, "raw_sales"))
 
     @task
-    def extraer_historico(directorio):
-        """Lee online_retail.csv."""
-        from datamart import extraccion
+    def extract_history(directory):
+        """Reads online_retail.csv."""
+        from datamart import extract
 
-        archivo = cfg.DIRECTORIO_DATOS / Variable.get(cfg.VAR_ARCHIVO_HISTORICO)
-        return extraccion.extraer_fuente(
-            archivo, cfg.FUENTE_HISTORICO, _ruta(directorio, "extraido_historico")
-        )
+        file = cfg.DATA_DIR / Variable.get(cfg.VAR_HISTORY_FILE)
+        return extract.extract_source(file, cfg.SOURCE_HISTORY, _path(directory, "raw_history"))
 
     @task
-    def extraer_reglas_categoria(directorio):
-        """Lee las reglas de categoría de seeds/category_rules.csv."""
-        from datamart import extraccion
+    def extract_category_rules(directory):
+        """Reads the category rules from seeds/category_rules.csv."""
+        from datamart import extract
 
-        reglas = extraccion.leer_reglas_categoria()
-        ruta = _ruta(directorio, "reglas_categoria")
-        reglas.to_parquet(ruta, index=False)
-        return ruta
+        rules = extract.read_category_rules()
+        path = _path(directory, "category_rules")
+        rules.to_parquet(path, index=False)
+        return path
 
     # =========================================================================
-    # TRANSFORMACIÓN Y CALIDAD
+    # TRANSFORM AND QUALITY
     # =========================================================================
     @task
-    def transformar_y_unificar(ventas, historico, ruta_reglas, directorio):
-        """Limpia y une las dos fuentes."""
+    def transform_and_merge(sales, history, rules_path, directory):
+        """Cleans and merges the two sources."""
         import pandas as pd
 
-        from datamart import extraccion, transformacion
+        from datamart import extract, transform
 
-        resultado = transformacion.transformar_y_unificar(
-            pd.read_parquet(ventas["ruta"]),
-            pd.read_parquet(historico["ruta"]),
-            pd.read_parquet(ruta_reglas),
-            extraccion.leer_mapeo_paises(),
-            Variable.get(cfg.VAR_ZONA_HORARIA),
+        result = transform.transform_and_merge(
+            pd.read_parquet(sales["path"]),
+            pd.read_parquet(history["path"]),
+            pd.read_parquet(rules_path),
+            extract.read_country_mapping(),
+            Variable.get(cfg.VAR_TIMEZONE),
         )
-        rutas = {}
-        for nombre in ["lineas", "rechazos", "productos"]:
-            rutas[nombre] = _ruta(directorio, nombre)
-            resultado[nombre].to_parquet(rutas[nombre], index=False)
-        return {"rutas": rutas, "metricas": resultado["metricas"]}
+        paths = {}
+        for name in ["lines", "rejections", "products"]:
+            paths[name] = _path(directory, name)
+            result[name].to_parquet(paths[name], index=False)
+        return {"paths": paths, "metrics": result["metrics"]}
 
     @task
-    def validar_calidad(transformado, directorio):
-        """Separa ventas de devoluciones y valida antes de cargar."""
+    def check_quality(transformed, directory):
+        """Splits sales from returns and validates before loading."""
         import pandas as pd
 
-        from datamart import calidad
+        from datamart import quality
 
-        rutas = transformado["rutas"]
-        metricas = transformado["metricas"]
-        ventas, devoluciones = calidad.separar_ventas_devoluciones(
-            pd.read_parquet(rutas["lineas"]), Variable.get(cfg.VAR_MONEDA)
+        paths = transformed["paths"]
+        metrics = transformed["metrics"]
+        sales, returns = quality.split_sales_returns(
+            pd.read_parquet(paths["lines"]), Variable.get(cfg.VAR_CURRENCY)
         )
-        ratio = calidad.validar_contrato(
-            ventas,
-            devoluciones,
-            pd.read_parquet(rutas["productos"]),
-            pd.read_parquet(rutas["rechazos"]),
-            metricas,
-            float(Variable.get(cfg.VAR_MAX_RATIO_RECHAZOS)),
+        ratio = quality.check_contract(
+            sales,
+            returns,
+            pd.read_parquet(paths["products"]),
+            pd.read_parquet(paths["rejections"]),
+            metrics,
+            float(Variable.get(cfg.VAR_MAX_REJECT_RATIO)),
         )
-        rutas = {
-            **rutas,
-            "ventas": _ruta(directorio, "ventas"),
-            "devoluciones": _ruta(directorio, "devoluciones"),
+        paths = {
+            **paths,
+            "sales": _path(directory, "sales"),
+            "returns": _path(directory, "returns"),
         }
-        ventas.to_parquet(rutas["ventas"], index=False)
-        devoluciones.to_parquet(rutas["devoluciones"], index=False)
-        return {"rutas": rutas, "metricas": {**metricas, "ratio_rechazos": round(ratio, 4)}}
+        sales.to_parquet(paths["sales"], index=False)
+        returns.to_parquet(paths["returns"], index=False)
+        return {"paths": paths, "metrics": {**metrics, "reject_ratio": round(ratio, 4)}}
 
     # =========================================================================
-    # CARGA
+    # LOAD
     # =========================================================================
     @task
-    def cargar_staging(validado):
-        """Carga productos, ventas y devoluciones a staging."""
+    def load_staging(checked):
+        """Loads products, sales and returns into staging."""
         import pandas as pd
 
-        from datamart import carga
+        from datamart import load
 
-        rutas = validado["rutas"]
-        carga.cargar_staging(
-            _engine_dwh(),
-            pd.read_parquet(rutas["productos"]),
-            pd.read_parquet(rutas["ventas"]),
-            pd.read_parquet(rutas["devoluciones"]),
+        paths = checked["paths"]
+        load.load_staging(
+            _dwh_engine(),
+            pd.read_parquet(paths["products"]),
+            pd.read_parquet(paths["sales"]),
+            pd.read_parquet(paths["returns"]),
         )
 
     @task
-    def cargar_rechazos(validado):
-        """Guarda los rechazos en audit.rejected_records."""
+    def load_rejections(checked):
+        """Saves the rejections to audit.rejected_records."""
         import pandas as pd
 
-        from datamart import carga
+        from datamart import load
 
         run_id = get_current_context()["run_id"]
-        return carga.cargar_rechazos(
-            _engine_dwh(), pd.read_parquet(validado["rutas"]["rechazos"]), run_id
+        return load.load_rejections(
+            _dwh_engine(), pd.read_parquet(checked["paths"]["rejections"]), run_id
         )
 
     @task
-    def cargar_dimensiones():
-        """Upsert de fechas, productos, clientes y países."""
-        from datamart import carga
+    def load_dimensions():
+        """Upsert of dates, products, customers and countries."""
+        from datamart import load
 
-        return carga.cargar_dimensiones(_engine_dwh())
-
-    @task
-    def cargar_hecho_ventas():
-        """Delete-insert de dwh.sales_fact."""
-        from datamart import carga
-
-        return carga.cargar_hecho_ventas(_engine_dwh())
+        return load.load_dimensions(_dwh_engine())
 
     @task
-    def cargar_hecho_devoluciones():
-        """Delete-insert de dwh.returns_fact."""
-        from datamart import carga
+    def load_sales_fact():
+        """Delete-insert of dwh.sales_fact."""
+        from datamart import load
 
-        return carga.cargar_hecho_devoluciones(_engine_dwh())
-
-    @task
-    def construir_revenue_diario():
-        """Revenue bruto, devoluciones y neto por producto y día."""
-        from datamart import carga
-
-        return carga.construir_revenue_diario(_engine_dwh())
+        return load.load_sales_fact(_dwh_engine())
 
     @task
-    def validar_carga(validado):
-        """Revisa los conteos después de cargar y registra el run."""
-        from datamart import carga
+    def load_returns_fact():
+        """Delete-insert of dwh.returns_fact."""
+        from datamart import load
 
-        contexto = get_current_context()
-        return carga.validar_carga(
-            _engine_dwh(),
-            validado["metricas"],
-            contexto["run_id"],
-            # los runs manuales pueden venir sin logical_date
-            contexto.get("logical_date"),
+        return load.load_returns_fact(_dwh_engine())
+
+    @task
+    def build_daily_revenue():
+        """Gross revenue, returns and net revenue per product and day."""
+        from datamart import load
+
+        return load.build_daily_revenue(_dwh_engine())
+
+    @task
+    def validate_load(checked):
+        """Checks the counts after loading and logs the run."""
+        from datamart import load
+
+        context = get_current_context()
+        return load.validate_load(
+            _dwh_engine(),
+            checked["metrics"],
+            context["run_id"],
+            # manual runs can come without a logical_date
+            context.get("logical_date"),
         )
 
     @teardown
     @task
-    def limpiar_temporales(directorio):
-        """Borra los parquet del run, aunque algo falle."""
-        shutil.rmtree(directorio, ignore_errors=True)
+    def cleanup_tmp(directory):
+        """Deletes the run's parquet files, even if something failed."""
+        shutil.rmtree(directory, ignore_errors=True)
 
     # =========================================================================
-    # DEPENDENCIAS
+    # DEPENDENCIES
     # =========================================================================
-    directorio = preparar_directorio_temporal()
-    tablas = crear_tablas_dwh()
+    directory = prepare_tmp_dir()
+    tables = create_dwh_tables()
 
-    ventas = extraer_ventas_diarias(directorio)
-    historico = extraer_historico(directorio)
-    reglas = extraer_reglas_categoria(directorio)
-    esperar_archivo_ventas >> ventas
-    esperar_archivo_historico >> historico
+    sales = extract_daily_sales(directory)
+    history = extract_history(directory)
+    rules = extract_category_rules(directory)
+    wait_for_sales_file >> sales
+    wait_for_history_file >> history
 
-    transformado = transformar_y_unificar(ventas, historico, reglas, directorio)
-    validado = validar_calidad(transformado, directorio)
+    transformed = transform_and_merge(sales, history, rules, directory)
+    checked = check_quality(transformed, directory)
 
-    staging = cargar_staging(validado)
-    rechazos = cargar_rechazos(validado)
-    tablas >> [staging, rechazos]
+    staging = load_staging(checked)
+    rejections = load_rejections(checked)
+    tables >> [staging, rejections]
 
-    dimensiones = cargar_dimensiones()
-    hecho_ventas = cargar_hecho_ventas()
-    hecho_devoluciones = cargar_hecho_devoluciones()
-    agregado = construir_revenue_diario()
-    validacion = validar_carga(validado)
+    dimensions = load_dimensions()
+    sales_fact = load_sales_fact()
+    returns_fact = load_returns_fact()
+    daily_revenue = build_daily_revenue()
+    validation = validate_load(checked)
 
-    staging >> dimensiones >> [hecho_ventas, hecho_devoluciones] >> agregado
-    [agregado, rechazos] >> validacion >> limpiar_temporales(directorio)
+    staging >> dimensions >> [sales_fact, returns_fact] >> daily_revenue
+    [daily_revenue, rejections] >> validation >> cleanup_tmp(directory)
 
 
-datamart_etl_diario()
+datamart_daily_etl()

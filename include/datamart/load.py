@@ -1,66 +1,64 @@
-"""Carga al DWH en Postgres."""
+"""Loading into the Postgres DWH."""
 
 import io
 from pathlib import Path
 
 from sqlalchemy import text
 
-from datamart import configuracion as cfg
-from datamart.utilidades import formato_numero, sub, titulo
+from datamart import config as cfg
+from datamart.log_utils import fmt_int, section, step
 
 # =============================================================================
 # 1. HELPERS
 # =============================================================================
 
 
-def ejecutar_ddl(engine, directorio_ddl=cfg.DIRECTORIO_DDL):
-    """Corre los .sql de sql/ddl en orden."""
-    titulo("DDL DEL REPOSITORIO ANALÍTICO")
-    scripts = sorted(Path(directorio_ddl).glob("*.sql"))
+def run_ddl(engine, ddl_dir=cfg.DDL_DIR):
+    """Runs the .sql files in sql/ddl in order."""
+    section("DWH DDL")
+    scripts = sorted(Path(ddl_dir).glob("*.sql"))
     if not scripts:
-        raise ValueError(f"No hay scripts DDL en {directorio_ddl}")
-    with engine.begin() as conexion:
+        raise ValueError(f"No DDL scripts in {ddl_dir}")
+    with engine.begin() as conn:
         for script in scripts:
-            sub(f"Ejecutando {script.name}")
-            conexion.exec_driver_sql(script.read_text(encoding="utf-8"))
+            step(f"Running {script.name}")
+            conn.exec_driver_sql(script.read_text(encoding="utf-8"))
 
 
-def _copiar(conexion, df, tabla, columnas):
-    """COPY desde un DataFrame (to_sql era muy lento con tantas filas)."""
+def _copy(conn, df, table, columns):
+    """COPY from a DataFrame (to_sql was too slow with this many rows)."""
     buffer = io.StringIO()
-    df[columnas].to_csv(buffer, index=False, header=False)
+    df[columns].to_csv(buffer, index=False, header=False)
     buffer.seek(0)
-    cursor = conexion.connection.cursor()
-    cursor.copy_expert(f"COPY {tabla} ({', '.join(columnas)}) FROM STDIN WITH (FORMAT csv)", buffer)
-    sub(f"COPY {tabla}: {formato_numero(len(df))} filas")
+    cursor = conn.connection.cursor()
+    cursor.copy_expert(f"COPY {table} ({', '.join(columns)}) FROM STDIN WITH (FORMAT csv)", buffer)
+    step(f"COPY {table}: {fmt_int(len(df))} rows")
 
 
-def _contar(conexion, sql, **parametros):
-    """Devuelve el resultado escalar de una consulta."""
-    return conexion.execute(text(sql), parametros).scalar()
+def _scalar(conn, sql, **params):
+    """Returns the scalar result of a query."""
+    return conn.execute(text(sql), params).scalar()
 
 
 # =============================================================================
-# 2. STAGING Y RECHAZOS
+# 2. STAGING AND REJECTIONS
 # =============================================================================
 
 
-def cargar_staging(engine, productos, ventas, devoluciones):
-    """Truncate + COPY de las tablas staging."""
-    titulo("CARGA A STAGING")
-    with engine.begin() as conexion:
-        conexion.execute(
-            text("TRUNCATE staging.products_stg, staging.sales_stg, staging.returns_stg;")
-        )
-        _copiar(
-            conexion,
-            productos,
+def load_staging(engine, products, sales, returns):
+    """Truncate + COPY of the staging tables."""
+    section("STAGING LOAD")
+    with engine.begin() as conn:
+        conn.execute(text("TRUNCATE staging.products_stg, staging.sales_stg, staging.returns_stg;"))
+        _copy(
+            conn,
+            products,
             "staging.products_stg",
             ["stock_code", "product_description", "category", "description_variants"],
         )
-        _copiar(
-            conexion,
-            ventas,
+        _copy(
+            conn,
+            sales,
             "staging.sales_stg",
             [
                 "row_hash",
@@ -76,9 +74,9 @@ def cargar_staging(engine, productos, ventas, devoluciones):
                 "currency",
             ],
         )
-        _copiar(
-            conexion,
-            devoluciones,
+        _copy(
+            conn,
+            returns,
             "staging.returns_stg",
             [
                 "row_hash",
@@ -97,30 +95,30 @@ def cargar_staging(engine, productos, ventas, devoluciones):
         )
 
 
-def cargar_rechazos(engine, rechazos, run_id):
-    """Borra los rechazos anteriores y carga los de este run."""
-    titulo("LOG DE RECHAZOS")
-    rechazos = rechazos.assign(run_id=run_id)
-    with engine.begin() as conexion:
-        borradas = conexion.execute(
-            text("DELETE FROM audit.rejected_records WHERE source_system = ANY(:fuentes);"),
-            {"fuentes": cfg.FUENTES},
+def load_rejections(engine, rejections, run_id):
+    """Deletes the previous rejections and loads the ones from this run."""
+    section("REJECTION LOG")
+    rejections = rejections.assign(run_id=run_id)
+    with engine.begin() as conn:
+        deleted = conn.execute(
+            text("DELETE FROM audit.rejected_records WHERE source_system = ANY(:sources);"),
+            {"sources": cfg.SOURCES},
         ).rowcount
-        sub(f"Rechazos anteriores borrados: {formato_numero(borradas)}")
-        _copiar(
-            conexion,
-            rechazos,
+        step(f"Previous rejections deleted: {fmt_int(deleted)}")
+        _copy(
+            conn,
+            rejections,
             "audit.rejected_records",
             ["source_system", "source_row", "reason", "raw_record", "run_id"],
         )
-    return len(rechazos)
+    return len(rejections)
 
 
 # =============================================================================
-# 3. DIMENSIONES (upsert para que los id no cambien entre runs)
+# 3. DIMENSIONS (upsert so ids stay the same between runs)
 # =============================================================================
 
-SQL_DIM_FECHAS = """
+SQL_DIM_DATES = """
 INSERT INTO dwh.dates_dim (id_date, full_date, year, quarter, month, month_name, year_month,
                            day, day_of_week, day_name, is_weekend)
 SELECT TO_CHAR(d, 'YYYYMMDD')::INTEGER,
@@ -147,7 +145,7 @@ FROM generate_series(
 WHERE NOT EXISTS (SELECT 1 FROM dwh.dates_dim x WHERE x.full_date = d::DATE);
 """
 
-SQL_DIM_PRODUCTOS_UPDATE = """
+SQL_DIM_PRODUCTS_UPDATE = """
 UPDATE dwh.products_dim p
 SET product_description  = s.product_description,
     category             = s.category,
@@ -158,7 +156,7 @@ WHERE p.stock_code = s.stock_code
       IS DISTINCT FROM (s.product_description, s.category, s.description_variants);
 """
 
-SQL_DIM_PRODUCTOS_INSERT = """
+SQL_DIM_PRODUCTS_INSERT = """
 INSERT INTO dwh.products_dim (stock_code, product_description, category, description_variants)
 SELECT s.stock_code, s.product_description, s.category, s.description_variants
 FROM staging.products_stg s
@@ -166,7 +164,7 @@ WHERE NOT EXISTS (SELECT 1 FROM dwh.products_dim p WHERE p.stock_code = s.stock_
 ORDER BY s.stock_code;
 """
 
-SQL_DIM_CLIENTES = """
+SQL_DIM_CUSTOMERS = """
 INSERT INTO dwh.customers_dim (customer_code, is_identified)
 SELECT DISTINCT customer_code, TRUE
 FROM (SELECT customer_code FROM staging.sales_stg
@@ -177,7 +175,7 @@ WHERE customer_code IS NOT NULL
 ORDER BY customer_code;
 """
 
-SQL_DIM_PAISES = """
+SQL_DIM_COUNTRIES = """
 INSERT INTO dwh.countries_dim (country_name)
 SELECT DISTINCT country_name
 FROM (SELECT country_name FROM staging.sales_stg
@@ -188,27 +186,25 @@ ORDER BY country_name;
 """
 
 
-def cargar_dimensiones(engine):
-    """Inserta lo nuevo y actualiza lo que cambió en las dimensiones."""
-    titulo("CARGA DE DIMENSIONES")
-    resumen = {}
-    with engine.begin() as conexion:
-        resumen["fechas_nuevas"] = conexion.execute(text(SQL_DIM_FECHAS)).rowcount
-        resumen["productos_actualizados"] = conexion.execute(
-            text(SQL_DIM_PRODUCTOS_UPDATE)
-        ).rowcount
-        resumen["productos_nuevos"] = conexion.execute(text(SQL_DIM_PRODUCTOS_INSERT)).rowcount
-        resumen["clientes_nuevos"] = conexion.execute(text(SQL_DIM_CLIENTES)).rowcount
-        resumen["paises_nuevos"] = conexion.execute(text(SQL_DIM_PAISES)).rowcount
-    sub(f"Resumen dimensiones: {resumen}")
-    return resumen
+def load_dimensions(engine):
+    """Inserts what is new and updates what changed in the dimensions."""
+    section("DIMENSIONS LOAD")
+    summary = {}
+    with engine.begin() as conn:
+        summary["new_dates"] = conn.execute(text(SQL_DIM_DATES)).rowcount
+        summary["updated_products"] = conn.execute(text(SQL_DIM_PRODUCTS_UPDATE)).rowcount
+        summary["new_products"] = conn.execute(text(SQL_DIM_PRODUCTS_INSERT)).rowcount
+        summary["new_customers"] = conn.execute(text(SQL_DIM_CUSTOMERS)).rowcount
+        summary["new_countries"] = conn.execute(text(SQL_DIM_COUNTRIES)).rowcount
+    step(f"Dimensions summary: {summary}")
+    return summary
 
 
 # =============================================================================
-# 4. HECHOS (delete-insert)
+# 4. FACTS (delete-insert)
 # =============================================================================
 
-SQL_HECHO_VENTAS = """
+SQL_FACT_SALES = """
 INSERT INTO dwh.sales_fact (row_hash, source_system, invoice_no, invoice_ts_utc, id_date,
                             id_product, id_customer, id_country, quantity, unit_price,
                             gross_revenue, currency)
@@ -223,7 +219,7 @@ JOIN dwh.countries_dim co      ON co.country_name = s.country_name
 ON CONFLICT (row_hash) DO NOTHING;
 """
 
-SQL_HECHO_DEVOLUCIONES = """
+SQL_FACT_RETURNS = """
 INSERT INTO dwh.returns_fact (row_hash, source_system, invoice_no, return_type, invoice_ts_utc,
                               id_date, id_product, id_customer, id_country, quantity_returned,
                               unit_price, return_amount, currency)
@@ -239,131 +235,129 @@ ON CONFLICT (row_hash) DO NOTHING;
 """
 
 
-def _cargar_hecho(engine, tabla_hecho, tabla_staging, sql_insert):
-    """Delete-insert desde staging y revisa que no se pierdan filas."""
-    with engine.begin() as conexion:
-        esperadas = _contar(conexion, f"SELECT COUNT(*) FROM {tabla_staging}")
-        borradas = conexion.execute(
-            text(f"DELETE FROM {tabla_hecho} WHERE source_system = ANY(:fuentes);"),
-            {"fuentes": cfg.FUENTES},
+def _load_fact(engine, fact_table, staging_table, sql_insert):
+    """Delete-insert from staging, checking that no rows get lost."""
+    with engine.begin() as conn:
+        expected = _scalar(conn, f"SELECT COUNT(*) FROM {staging_table}")
+        deleted = conn.execute(
+            text(f"DELETE FROM {fact_table} WHERE source_system = ANY(:sources);"),
+            {"sources": cfg.SOURCES},
         ).rowcount
-        insertadas = conexion.execute(text(sql_insert)).rowcount
-        sub(
-            f"{tabla_hecho}: borradas {formato_numero(borradas)} | insertadas "
-            f"{formato_numero(insertadas)} | en staging {formato_numero(esperadas)}"
+        inserted = conn.execute(text(sql_insert)).rowcount
+        step(
+            f"{fact_table}: deleted {fmt_int(deleted)} | inserted {fmt_int(inserted)}"
+            f" | in staging {fmt_int(expected)}"
         )
-        # si el JOIN perdió filas algo falta en las dimensiones -> rollback
-        if insertadas != esperadas:
-            raise ValueError(
-                f"{tabla_hecho}: se insertaron {insertadas} filas de {esperadas} en staging"
-            )
-    return insertadas
+        # if the JOIN dropped rows something is missing in the dimensions -> rollback
+        if inserted != expected:
+            raise ValueError(f"{fact_table}: inserted {inserted} of {expected} staging rows")
+    return inserted
 
 
-def cargar_hecho_ventas(engine):
-    """Carga dwh.sales_fact."""
-    titulo("CARGA HECHO VENTAS")
-    return _cargar_hecho(engine, "dwh.sales_fact", "staging.sales_stg", SQL_HECHO_VENTAS)
+def load_sales_fact(engine):
+    """Loads dwh.sales_fact."""
+    section("SALES FACT LOAD")
+    return _load_fact(engine, "dwh.sales_fact", "staging.sales_stg", SQL_FACT_SALES)
 
 
-def cargar_hecho_devoluciones(engine):
-    """Carga dwh.returns_fact."""
-    titulo("CARGA HECHO DEVOLUCIONES")
-    return _cargar_hecho(engine, "dwh.returns_fact", "staging.returns_stg", SQL_HECHO_DEVOLUCIONES)
+def load_returns_fact(engine):
+    """Loads dwh.returns_fact."""
+    section("RETURNS FACT LOAD")
+    return _load_fact(engine, "dwh.returns_fact", "staging.returns_stg", SQL_FACT_RETURNS)
 
 
 # =============================================================================
-# 5. AGREGADO DIARIO: REVENUE BRUTO Y NETO POR PRODUCTO
+# 5. DAILY AGGREGATE: GROSS AND NET REVENUE PER PRODUCT
 # =============================================================================
 
-SQL_AGREGADO = """
+SQL_DAILY_AGG = """
 INSERT INTO dwh.daily_product_revenue_agg (id_date, id_product, sales_lines, units_sold,
                                            gross_revenue, return_lines, units_returned,
                                            returns_amount, net_revenue)
-WITH ventas AS (
-    SELECT id_date, id_product, COUNT(*) AS lineas, SUM(quantity) AS unidades,
-           SUM(gross_revenue) AS bruto
+WITH sales AS (
+    SELECT id_date, id_product, COUNT(*) AS lines, SUM(quantity) AS units,
+           SUM(gross_revenue) AS gross
     FROM dwh.sales_fact
     GROUP BY id_date, id_product
 ),
-devoluciones AS (
-    SELECT id_date, id_product, COUNT(*) AS lineas, SUM(quantity_returned) AS unidades,
-           SUM(return_amount) AS monto
+returns AS (
+    SELECT id_date, id_product, COUNT(*) AS lines, SUM(quantity_returned) AS units,
+           SUM(return_amount) AS amount
     FROM dwh.returns_fact
     GROUP BY id_date, id_product
 )
-SELECT COALESCE(v.id_date, d.id_date),
-       COALESCE(v.id_product, d.id_product),
-       COALESCE(v.lineas, 0),
-       COALESCE(v.unidades, 0),
-       COALESCE(v.bruto, 0),
-       COALESCE(d.lineas, 0),
-       COALESCE(d.unidades, 0),
-       COALESCE(d.monto, 0),
-       COALESCE(v.bruto, 0) - COALESCE(d.monto, 0)
-FROM ventas v
-FULL OUTER JOIN devoluciones d
-  ON d.id_date = v.id_date AND d.id_product = v.id_product;
+SELECT COALESCE(s.id_date, r.id_date),
+       COALESCE(s.id_product, r.id_product),
+       COALESCE(s.lines, 0),
+       COALESCE(s.units, 0),
+       COALESCE(s.gross, 0),
+       COALESCE(r.lines, 0),
+       COALESCE(r.units, 0),
+       COALESCE(r.amount, 0),
+       COALESCE(s.gross, 0) - COALESCE(r.amount, 0)
+FROM sales s
+FULL OUTER JOIN returns r
+  ON r.id_date = s.id_date AND r.id_product = s.id_product;
 """
 
 
-def construir_revenue_diario(engine):
-    """Recalcula bruto, devoluciones y neto por producto y día."""
-    titulo("AGREGADO DIARIO DE REVENUE")
-    with engine.begin() as conexion:
-        conexion.execute(text("DELETE FROM dwh.daily_product_revenue_agg;"))
-        filas = conexion.execute(text(SQL_AGREGADO)).rowcount
-    sub(f"Filas producto-día: {formato_numero(filas)}")
-    return filas
+def build_daily_revenue(engine):
+    """Rebuilds gross, returns and net revenue per product and day."""
+    section("DAILY REVENUE AGGREGATE")
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM dwh.daily_product_revenue_agg;"))
+        rows = conn.execute(text(SQL_DAILY_AGG)).rowcount
+    step(f"Product-day rows: {fmt_int(rows)}")
+    return rows
 
 
 # =============================================================================
-# 6. VALIDACIÓN POST-CARGA Y BITÁCORA
+# 6. POST-LOAD CHECKS AND RUN LOG
 # =============================================================================
 
-CHEQUEOS_POST_CARGA = {
-    "ventas_en_dwh_igual_a_staging": """
-        SELECT (SELECT COUNT(*) FROM dwh.sales_fact WHERE source_system = ANY(:fuentes))
+POST_LOAD_CHECKS = {
+    "sales_in_dwh_match_staging": """
+        SELECT (SELECT COUNT(*) FROM dwh.sales_fact WHERE source_system = ANY(:sources))
              = (SELECT COUNT(*) FROM staging.sales_stg)""",
-    "devoluciones_en_dwh_igual_a_staging": """
-        SELECT (SELECT COUNT(*) FROM dwh.returns_fact WHERE source_system = ANY(:fuentes))
+    "returns_in_dwh_match_staging": """
+        SELECT (SELECT COUNT(*) FROM dwh.returns_fact WHERE source_system = ANY(:sources))
              = (SELECT COUNT(*) FROM staging.returns_stg)""",
-    "bruto_agregado_cuadra_con_ventas": """
+    "agg_gross_matches_sales": """
         SELECT (SELECT COALESCE(SUM(gross_revenue), 0) FROM dwh.daily_product_revenue_agg)
              = (SELECT COALESCE(SUM(gross_revenue), 0) FROM dwh.sales_fact)""",
-    "devoluciones_agregado_cuadra": """
+    "agg_returns_match_returns": """
         SELECT (SELECT COALESCE(SUM(returns_amount), 0) FROM dwh.daily_product_revenue_agg)
              = (SELECT COALESCE(SUM(return_amount), 0) FROM dwh.returns_fact)""",
-    "sin_ventas_con_precio_no_positivo": """
+    "no_sales_with_non_positive_price": """
         SELECT NOT EXISTS (SELECT 1 FROM dwh.sales_fact WHERE unit_price <= 0)""",
-    "todos_los_productos_tienen_categoria": """
+    "all_products_have_category": """
         SELECT NOT EXISTS (SELECT 1 FROM dwh.products_dim WHERE category IS NULL)""",
 }
 
 
-def validar_carga(engine, metricas, run_id, logical_date):
-    """Chequeos después de cargar + registro en audit.pipeline_runs."""
-    titulo("VALIDACIÓN POST-CARGA")
-    fallidos = []
-    with engine.connect() as conexion:
-        for nombre, sql in CHEQUEOS_POST_CARGA.items():
-            ok = bool(_contar(conexion, sql, fuentes=cfg.FUENTES))
-            sub(f"{'OK   ' if ok else 'FALLA'} {nombre}")
+def validate_load(engine, metrics, run_id, logical_date):
+    """Checks after loading + entry in audit.pipeline_runs."""
+    section("POST-LOAD CHECKS")
+    failed = []
+    with engine.connect() as conn:
+        for name, sql in POST_LOAD_CHECKS.items():
+            ok = bool(_scalar(conn, sql, sources=cfg.SOURCES))
+            step(f"{'OK  ' if ok else 'FAIL'} {name}")
             if not ok:
-                fallidos.append(nombre)
-        filas_ventas = _contar(conexion, "SELECT COUNT(*) FROM dwh.sales_fact")
-        filas_devoluciones = _contar(conexion, "SELECT COUNT(*) FROM dwh.returns_fact")
+                failed.append(name)
+        sales_rows = _scalar(conn, "SELECT COUNT(*) FROM dwh.sales_fact")
+        returns_rows = _scalar(conn, "SELECT COUNT(*) FROM dwh.returns_fact")
 
-    estado = "exitoso" if not fallidos else "fallido"
-    with engine.begin() as conexion:
-        conexion.execute(
+    status = "success" if not failed else "failed"
+    with engine.begin() as conn:
+        conn.execute(
             text(
                 """
                 INSERT INTO audit.pipeline_runs (run_id, logical_date, rows_read_sales,
                     rows_read_history, rows_valid, rows_rejected, duplicates_cross_source,
                     rows_sales_fact, rows_returns_fact, rejected_ratio, status, updated_at)
-                VALUES (:run_id, :logical_date, :leidas_ventas, :leidas_historico, :validas,
-                    :rechazadas, :duplicados, :ventas, :devoluciones, :ratio, :estado, now())
+                VALUES (:run_id, :logical_date, :read_sales, :read_history, :valid,
+                    :rejected, :duplicates, :sales, :returns, :ratio, :status, now())
                 ON CONFLICT (run_id) DO UPDATE SET
                     rows_read_sales = EXCLUDED.rows_read_sales,
                     rows_read_history = EXCLUDED.rows_read_history,
@@ -380,22 +374,19 @@ def validar_carga(engine, metricas, run_id, logical_date):
             {
                 "run_id": run_id,
                 "logical_date": logical_date,
-                "leidas_ventas": metricas["filas_leidas_ventas"],
-                "leidas_historico": metricas["filas_leidas_historico"],
-                "validas": metricas["filas_validas"],
-                "rechazadas": metricas["filas_rechazadas"],
-                "duplicados": metricas["duplicados_entre_fuentes"],
-                "ventas": filas_ventas,
-                "devoluciones": filas_devoluciones,
-                "ratio": metricas["ratio_rechazos"],
-                "estado": estado,
+                "read_sales": metrics["rows_read_sales"],
+                "read_history": metrics["rows_read_history"],
+                "valid": metrics["rows_valid"],
+                "rejected": metrics["rows_rejected"],
+                "duplicates": metrics["cross_source_duplicates"],
+                "sales": sales_rows,
+                "returns": returns_rows,
+                "ratio": metrics["reject_ratio"],
+                "status": status,
             },
         )
 
-    if fallidos:
-        raise ValueError(f"Fallaron los chequeos post-carga: {fallidos}")
-    sub(
-        f"Ventas en DWH: {formato_numero(filas_ventas)} | "
-        f"Devoluciones: {formato_numero(filas_devoluciones)}"
-    )
-    return estado
+    if failed:
+        raise ValueError(f"Post-load checks failed: {failed}")
+    step(f"Sales in DWH: {fmt_int(sales_rows)} | Returns: {fmt_int(returns_rows)}")
+    return status

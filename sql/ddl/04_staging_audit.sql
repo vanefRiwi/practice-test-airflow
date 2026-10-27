@@ -1,5 +1,5 @@
 -- =============================================================================
--- 04. Staging (UNLOGGED: tablas de paso, no necesitan WAL) y auditoría
+-- 04. Staging (UNLOGGED: landing tables, no WAL needed) and audit
 -- =============================================================================
 
 CREATE UNLOGGED TABLE IF NOT EXISTS staging.products_stg (
@@ -38,19 +38,19 @@ CREATE UNLOGGED TABLE IF NOT EXISTS staging.returns_stg (
     currency          CHAR(3)       NOT NULL
 );
 
--- Log de registros rechazados: el registro original se guarda tal cual en JSONB
+-- Rejected records log: the original record is stored as is in JSONB
 CREATE TABLE IF NOT EXISTS audit.rejected_records (
     source_system VARCHAR(20)  NOT NULL,
-    source_row    INTEGER      NOT NULL,      -- fila de datos en el CSV original
+    source_row    INTEGER      NOT NULL,      -- data row in the original CSV
     reason        VARCHAR(50)  NOT NULL,
     raw_record    JSONB        NOT NULL,
-    run_id        VARCHAR(250) NOT NULL,      -- ejecución que cargó el registro
+    run_id        VARCHAR(250) NOT NULL,      -- run that loaded the record
     CONSTRAINT pk_rejected_records PRIMARY KEY (source_system, source_row)
 );
 
 CREATE INDEX IF NOT EXISTS ix_rejected_reason ON audit.rejected_records (reason);
 
--- Bitácora de ejecuciones (una fila por DAG run)
+-- Run log (one row per DAG run)
 CREATE TABLE IF NOT EXISTS audit.pipeline_runs (
     run_id                   VARCHAR(250) PRIMARY KEY,
     logical_date             TIMESTAMPTZ,

@@ -24,7 +24,7 @@ Table dwh.products_dim {
 }
 
 Table dwh.customers_dim {
-  id_customer serial [pk, note: '-1 = ANONIMO']
+  id_customer serial [pk, note: '-1 = ANONYMOUS']
   customer_code varchar(20) [unique]
   is_identified boolean
 }
@@ -53,7 +53,7 @@ Table dwh.returns_fact {
   row_hash char(32) [pk]
   source_system varchar(20)
   invoice_no varchar(20)
-  return_type varchar(20) [note: 'cancelacion | ajuste']
+  return_type varchar(20) [note: 'cancellation | adjustment']
   invoice_ts_utc timestamptz
   id_date integer [ref: > dwh.dates_dim.id_date]
   id_product integer [ref: > dwh.products_dim.id_product]

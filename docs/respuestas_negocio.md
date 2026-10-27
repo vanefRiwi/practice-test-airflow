@@ -1,6 +1,6 @@
 # Respuestas a las preguntas de negocio
 
-Cada respuesta sale de una consulta en [`sql/consultas/`](../sql/consultas), ejecutable contra el repositorio analítico después de correr el DAG. Cifras en libras esterlinas (GBP), periodo del 01/12/2010 al 09/12/2011.
+Cada respuesta sale de una consulta en [`sql/queries/`](../sql/queries), ejecutable contra el repositorio analítico después de correr el DAG. Cifras en libras esterlinas (GBP), periodo del 01/12/2010 al 09/12/2011.
 
 **Totales del periodo:** revenue bruto **10,25 M**, devoluciones **0,48 M**, revenue neto **9,77 M**.
 
@@ -8,7 +8,7 @@ Cada respuesta sale de una consulta en [`sql/consultas/`](../sql/consultas), eje
 
 ## P1. Evolución mensual de las ventas netas
 
-Consulta: [`q1_ventas_netas_mensuales.sql`](../sql/consultas/q1_ventas_netas_mensuales.sql)
+Consulta: [`q1_monthly_net_sales.sql`](../sql/queries/q1_monthly_net_sales.sql)
 
 | Mes | Bruto | Devoluciones | Neto | % devolución |
 |---|---:|---:|---:|---:|
@@ -36,41 +36,41 @@ Consulta: [`q1_ventas_netas_mensuales.sql`](../sql/consultas/q1_ventas_netas_men
 
 ## P2. Categorías por revenue bruto y proporción de devoluciones
 
-Consulta: [`q2_categorias_revenue_devoluciones.sql`](../sql/consultas/q2_categorias_revenue_devoluciones.sql)
+Consulta: [`q2_category_revenue_returns.sql`](../sql/queries/q2_category_revenue_returns.sql)
 
 | Categoría | Productos | Bruto | % del bruto | Devoluciones | % devolución (monto) |
 |---|---:|---:|---:|---:|---:|
-| Hogar | 1.904 | 6.126.783 | **59,79 %** | 239.573 | 3,91 % |
-| Ropa | 535 | 1.204.941 | 11,76 % | 20.372 | 1,69 % |
-| Papelería | 546 | 1.143.068 | 11,16 % | 184.719 | **16,16 %** |
-| Sin clasificar | 680 | 867.374 | 8,46 % | 13.422 | 1,55 % |
-| Electrónica | 135 | 474.246 | 4,63 % | 9.908 | 2,09 % |
-| Deportes | 127 | 430.256 | 4,20 % | 7.907 | 1,84 % |
+| Home | 1.904 | 6.126.783 | **59,79 %** | 239.573 | 3,91 % |
+| Clothing | 535 | 1.204.941 | 11,76 % | 20.372 | 1,69 % |
+| Stationery | 546 | 1.143.068 | 11,16 % | 184.719 | **16,16 %** |
+| Uncategorized | 680 | 867.374 | 8,46 % | 13.422 | 1,55 % |
+| Electronics | 135 | 474.246 | 4,63 % | 9.908 | 2,09 % |
+| Sports | 127 | 430.256 | 4,20 % | 7.907 | 1,84 % |
 
-**Respuesta.** **Hogar** genera casi 6 de cada 10 libras de venta bruta. **Papelería** tiene la mayor proporción de devoluciones (16,16 %), seguida de Hogar (3,91 %).
+**Respuesta.** **Home** genera casi 6 de cada 10 libras de venta bruta. **Stationery** tiene la mayor proporción de devoluciones (16,16 %), seguida de Home (3,91 %).
 
-**Implicación.** El 16,16 % de Papelería no es un problema de la categoría: si se excluye el producto 23843 (un solo pedido cancelado, ver P7) su tasa baja a **1,67 %**, en línea con el resto.
+**Implicación.** El 16,16 % de Stationery no es un problema de la categoría: si se excluye el producto 23843 (un solo pedido cancelado, ver P7) su tasa baja a **1,67 %**, en línea con el resto.
 
 ---
 
 ## P3. Top 10 por revenue neto y top 10 por tasa de devolución
 
-Consulta: [`q3_top_productos.sql`](../sql/consultas/q3_top_productos.sql)
+Consulta: [`q3_top_products.sql`](../sql/queries/q3_top_products.sql)
 
 **Top 10 por revenue neto**
 
 | # | Código | Producto | Categoría | Neto |
 |---:|---|---|---|---:|
-| 1 | 22423 | REGENCY CAKESTAND 3 TIER | Hogar | 164.459 |
-| 2 | 85123A | WHITE HANGING HEART T-LIGHT HOLDER | Hogar | 99.791 |
-| 3 | 47566 | PARTY BUNTING | Hogar | 98.244 |
-| 4 | 85099B | JUMBO BAG RED RETROSPOT | Ropa | 92.176 |
-| 5 | 23084 | RABBIT NIGHT LIGHT | Electrónica | 66.662 |
-| 6 | 22086 | PAPER CHAIN KIT 50'S CHRISTMAS | Papelería | 63.715 |
-| 7 | 84879 | ASSORTED COLOUR BIRD ORNAMENT | Hogar | 58.792 |
-| 8 | 79321 | CHILLI LIGHTS | Electrónica | 53.747 |
-| 9 | 22502 | PICNIC BASKET WICKER SMALL | Deportes | 51.024 |
-| 10 | 22197 | POPCORN HOLDER | Hogar | 50.968 |
+| 1 | 22423 | REGENCY CAKESTAND 3 TIER | Home | 164.459 |
+| 2 | 85123A | WHITE HANGING HEART T-LIGHT HOLDER | Home | 99.791 |
+| 3 | 47566 | PARTY BUNTING | Home | 98.244 |
+| 4 | 85099B | JUMBO BAG RED RETROSPOT | Clothing | 92.176 |
+| 5 | 23084 | RABBIT NIGHT LIGHT | Electronics | 66.662 |
+| 6 | 22086 | PAPER CHAIN KIT 50'S CHRISTMAS | Stationery | 63.715 |
+| 7 | 84879 | ASSORTED COLOUR BIRD ORNAMENT | Home | 58.792 |
+| 8 | 79321 | CHILLI LIGHTS | Electronics | 53.747 |
+| 9 | 22502 | PICNIC BASKET WICKER SMALL | Sports | 51.024 |
+| 10 | 22197 | POPCORN HOLDER | Home | 50.968 |
 
 **Top 10 por tasa de devolución** (solo productos con al menos 1.000 GBP de venta bruta)
 
@@ -93,7 +93,7 @@ Consulta: [`q3_top_productos.sql`](../sql/consultas/q3_top_productos.sql)
 
 ## P4. Países por transacciones y ticket promedio
 
-Consulta: [`q4_paises_ticket_promedio.sql`](../sql/consultas/q4_paises_ticket_promedio.sql)
+Consulta: [`q4_country_avg_ticket.sql`](../sql/queries/q4_country_avg_ticket.sql)
 
 | País | Facturas | % facturas | Bruto | Ticket promedio |
 |---|---:|---:|---:|---:|
@@ -114,7 +114,7 @@ Consulta: [`q4_paises_ticket_promedio.sql`](../sql/consultas/q4_paises_ticket_pr
 
 ## P5. Clientes identificados vs. transacciones sin CustomerID
 
-Consulta: [`q5_clientes_identificados_vs_anonimos.sql`](../sql/consultas/q5_clientes_identificados_vs_anonimos.sql)
+Consulta: [`q5_identified_vs_anonymous.sql`](../sql/queries/q5_identified_vs_anonymous.sql)
 
 | Tipo | Facturas | % del bruto | Ticket promedio | Productos por factura | Unidades por línea | Precio unitario prom. | % devolución |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -129,7 +129,7 @@ Consulta: [`q5_clientes_identificados_vs_anonimos.sql`](../sql/consultas/q5_clie
 
 ## P6. Productos sin descripción consistente y total de códigos
 
-Consulta: [`q6_descripciones_inconsistentes.sql`](../sql/consultas/q6_descripciones_inconsistentes.sql)
+Consulta: [`q6_inconsistent_descriptions.sql`](../sql/queries/q6_inconsistent_descriptions.sql)
 
 | Métrica | Valor |
 |---|---:|
@@ -147,7 +147,7 @@ Los casos más extremos: `20713` JUMBO BAG OWLS (8 variantes), `23084` RABBIT NI
 
 ## P7. Recomendación al equipo de producto
 
-Consulta: [`q7_recomendacion_producto.sql`](../sql/consultas/q7_recomendacion_producto.sql)
+Consulta: [`q7_product_recommendation.sql`](../sql/queries/q7_product_recommendation.sql)
 
 **Hallazgo.** Dos pedidos explican más de la mitad de todas las devoluciones del periodo:
 
@@ -160,4 +160,4 @@ Juntos suman **245.949 GBP (51,7 % de las devoluciones)** y son la causa de los 
 
 **Recomendación.** Poner un **control de cantidad máxima por línea de pedido** (por ejemplo, confirmación obligatoria por encima de 10.000 unidades, cuando la línea de venta típica es de 13 unidades). Con ese control, la tasa de devolución del periodo habría pasado de **4,64 % a 2,30 %**, y el revenue bruto deja de inflarse con pedidos que se cancelan el mismo día.
 
-**Segunda prioridad.** Revisar la línea **"fairy cake"** de Hogar: `21108` FAIRY CAKE FLANNEL (36,50 % de devolución sobre 18.056 GBP) y `48185` DOORMAT FAIRY CAKE (19,08 % sobre 23.873 GBP) devuelven juntos 11.146 GBP. Igual con las lámparas **"CHANDELIER"** (`23056`, `23055`, `23064`), que superan el 40 % de devolución. Antes de la temporada septiembre-noviembre, que concentra el 35 % de las ventas, conviene revisar la calidad o la foto y descripción de estos productos.
+**Segunda prioridad.** Revisar la línea **"fairy cake"** de Home: `21108` FAIRY CAKE FLANNEL (36,50 % de devolución sobre 18.056 GBP) y `48185` DOORMAT FAIRY CAKE (19,08 % sobre 23.873 GBP) devuelven juntos 11.146 GBP. Igual con las lámparas **"CHANDELIER"** (`23056`, `23055`, `23064`), que superan el 40 % de devolución. Antes de la temporada septiembre-noviembre, que concentra el 35 % de las ventas, conviene revisar la calidad o la foto y descripción de estos productos.

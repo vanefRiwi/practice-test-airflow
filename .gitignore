@@ -1,14 +1,14 @@
-# Credenciales
+# Credentials
 .env
 
-# Entorno virtual (uv) y cachés de Python
+# Virtual env (uv) and Python caches
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
 
-# Airflow en ejecución
+# Airflow runtime files
 logs/*
 !logs/.gitkeep
 config/airflow.cfg
@@ -16,7 +16,7 @@ data/tmp/
 airflow.db
 standalone_admin_password.txt
 
-# Sistema / editores
+# OS / editors
 .DS_Store
 .idea/
 .vscode/

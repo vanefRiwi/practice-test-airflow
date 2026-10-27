@@ -33,7 +33,7 @@ erDiagram
         smallint description_variants
     }
     customers_dim {
-        serial id_customer PK "-1 = ANONIMO"
+        serial id_customer PK "-1 = ANONYMOUS"
         varchar customer_code UK
         boolean is_identified
     }
@@ -59,7 +59,7 @@ erDiagram
         char row_hash PK
         varchar source_system
         varchar invoice_no
-        varchar return_type "cancelacion o ajuste"
+        varchar return_type "cancellation o adjustment"
         timestamptz invoice_ts_utc
         int id_date FK
         int id_product FK
