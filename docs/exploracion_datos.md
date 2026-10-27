@@ -7,7 +7,7 @@ Resultados de `uv run python scripts/explorar_fuentes.py` sobre los archivos de 
 | Atributo | Ventas diarias | Histórico |
 |---|---|---|
 | Kaggle | carrie1/ecommerce-data | thedevastator/online-retail-transaction-dataset |
-| Archivo en el repo | `data/raw/data.csv.gz` | `data/raw/online_retail.csv.gz` |
+| Archivo en el repo | `data/raw/data.csv` | `data/raw/online_retail.csv` |
 | `source_system` | `ventas_diarias` | `historico` |
 | Encoding | ISO-8859-1 (falla en UTF-8) | UTF-8 |
 | Filas | 541.909 | 541.909 |
